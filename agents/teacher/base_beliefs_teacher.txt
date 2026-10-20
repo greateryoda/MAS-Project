@@ -1,0 +1,10 @@
+2026-09-01 | User: Dr. Martin Dupont, Associate Professor, Computer Science Department, martin.dupont@univ.fr
+2026-09-01 | Teaching: Multi-Agent Systems (M2 AI), Tuesday 9:00-12:00, Room A101
+2026-09-01 | Teaching: Software Architecture (M1), Thursday 14:00-17:00, Room C305
+2026-09-01 | Availability for meetings: Monday and Friday afternoons
+2026-09-01 | Not available on Wednesday (research day)
+2026-09-01 | Department meetings: first Monday of each month at 10:00
+2026-09-01 | Head of department: Prof. Claire Bernard
+2026-09-10 | Member of the M2 AI exam jury in December
+2026-09-10 | Already supervising 3 master's internships, no new supervisions this semester
+2026-09-15 | MAS course exam grades must be submitted to the student office by December 20

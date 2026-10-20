@@ -1,0 +1,10 @@
+2026-09-01 | Course: Multi-Agent Systems (M2 AI), lecturer Dr. Martin Dupont
+2026-09-01 | TP1 Flocking deadline: October 3
+2026-09-15 | TP2 BDI agent deadline: October 17
+2026-09-15 | TP3 Voting and reputation deadline: October 31
+2026-09-01 | Submission: one ZIP file per group on the course Moodle page
+2026-09-01 | Late policy: 1 point deducted per day, maximum 3 days late
+2026-09-01 | Extensions only with a documented reason (medical certificate, official absence)
+2026-09-01 | Office hours: Tuesday 14:00-16:00, Room B204
+2026-09-20 | Final exam: December 12, 9:00-12:00, Room A101, one handwritten A4 sheet allowed
+2026-09-01 | Grades are communicated only through Moodle, never by email

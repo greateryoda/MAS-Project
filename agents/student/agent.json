@@ -1,0 +1,14 @@
+{
+  "name": "StudentAgent",
+  "role": "Student", 
+  "beliefs": {
+    "contextFiles": ["agents/student/base_beliefs_student.txt"],
+    "memoryFile": "agents/student/learnt_beliefs_student.txt"
+  },
+  "attitude": {
+    "systemPromptFile": "agents/student/attitude_student.txt"
+  },
+  "desires": {
+    "maxRetries": 3
+  }
+}
