@@ -1,0 +1,42 @@
+[
+  {
+    "address": "luca.martin@etu.univ.fr",
+    "name": "Luca Martin",
+    "role": "Student"
+  },
+  {
+    "address": "lea.martin@etu.univ.fr",
+    "name": "Lea Martin",
+    "role": "Student"
+  },
+  {
+    "address": "tom.bernard92@gmail.com",
+    "name": "Tom Bernard",
+    "role": "Student"
+  },
+  {
+    "address": "claire.bernard@univ.fr",
+    "name": "Claire Bernard",
+    "role": "Teacher"
+  },
+  {
+    "address": "paul.lefevre@univ.fr",
+    "name": "Paul Lefevre",
+    "role": "Teacher"
+  },
+  {
+    "address": "scolarite@univ.fr",
+    "name": "Student Office",
+    "role": "ADMINISTRATION"
+  },
+  {
+    "address": "sarah.klein@tum.de",
+    "name": "Sarah Klein",
+    "role": "SUPERMAS_MEMBER"
+  },
+  {
+    "address": "lucas.moreau@univ.fr",
+    "name": "Lucas Moreau",
+    "role": "SUPERMAS_MEMBER"
+  }
+]

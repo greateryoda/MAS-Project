@@ -1,0 +1,53 @@
+# Système multi-agent de réponse aux emails (LLM local)
+
+Projet du cours Systèmes Multi-Agents (M2 IA). Un agent de routage reçoit un email,
+choisit l'agent spécialisé adapté (étudiant, enseignant, ...), et cet agent rédige
+une proposition de réponse à l'aide d'un LLM exécuté localement.
+
+## Prérequis
+- Java 17 ou plus récent
+- LM Studio (ou tout serveur compatible avec l'API OpenAI) lancé en local
+- Les bibliothèques Jackson sont fournies dans `lib/`
+
+## Configuration du LLM
+1. Dans LM Studio, télécharger et charger un modèle (par défaut : `google/gemma-4-e4b`).
+2. Démarrer le serveur local (onglet Developer -> Start Server, port 1234).
+3. Pour changer de modèle ou d'adresse, modifier `URL` et `MODEL` dans `src/Main.java`.
+
+## Compilation et exécution (depuis la racine du projet)
+Avec make :
+
+    make          # compile puis exécute
+    make build    # compile seulement
+    make clean    # supprime bin/
+
+Sans make :
+
+    javac -cp "lib/*" -d bin src/*.java
+    java -cp "bin:lib/*" Main
+
+L'email de test se modifie dans `src/Main.java`.
+
+## Organisation
+    src/
+      Main.java                 point d'entrée
+      RoutingAgent.java         choisit l'agent (carnet de contacts, puis domaine)
+      Agent.java, BDIAgent.java agents spécialisés
+      AgentFactory.java         crée un agent pour chaque dossier de agents/
+      AgentConfig.java          lecture de agent.json
+      Belief.java, BeliefBase.java  croyances : contexte de base + mémoire des fils
+      LLM.java, LmStudioClient.java interface LLM et client LM Studio
+      Email.java, TemporaryContactBook.java
+    agents/
+      <agent>/agent.json              configuration de l'agent
+      <agent>/attitude_*.txt          system prompt
+      <agent>/base_beliefs_*.txt      contexte (format : date | contenu)
+      <agent>/learnt_beliefs_*.txt    mémoire des emails reçus (générée)
+      contacts.json
+
+## Ajouter un agent
+Créer un dossier `agents/<nom>/` contenant un `agent.json` (voir les agents
+existants), un fichier de system prompt et un fichier de contexte. L'agent est
+chargé automatiquement au démarrage et reçoit les emails dont le rôle correspond
+à son champ `role`. Pour l'instant, les rôles des contacts sont encore définis
+dans `TemporaryContactBook.java` ; il faut donc y ajouter les adresses concernées.
