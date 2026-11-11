@@ -23,8 +23,11 @@ public class LmStudioClient implements LLM{
     public String ask(String systemPrompt, String message){
         try {
             return send(systemPrompt, message);
+        } catch (LlmException e) {
+            throw e;
         } catch (Exception e) {
-            return "Error: " + e.getMessage();
+            throw new LlmException("Could not reach the LLM at " + url
+                    + " (is LM Studio running with its server started?): " + e, e);
         }
     }
 
@@ -48,7 +51,8 @@ public class LmStudioClient implements LLM{
                 .send(request, HttpResponse.BodyHandlers.ofString());
 
         if (response.statusCode() != 200) {
-            return "Error" + response.statusCode() + ": " + response.body();
+            throw new LlmException("LLM error " + response.statusCode()
+                    + " (is the model \"" + model + "\" loaded in LM Studio?): " + response.body(), null);
         }
 
         JsonNode json = mapper.readTree(response.body());

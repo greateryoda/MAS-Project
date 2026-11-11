@@ -1,13 +1,16 @@
+import java.io.File;
 import java.util.List;
 import java.util.Map;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 public class Main {
 
-    private static final String URL   = "http://127.0.0.1:1234/v1/chat/completions";
-    private static final String MODEL = "google/gemma-4-e4b";
-
     public static void main(String[] args) throws Exception {
-        LLM llm = new LmStudioClient(URL, MODEL);
+        // adresse du serveur et modele : config.json a la racine du projet
+        JsonNode config = new ObjectMapper().readTree(new File("config.json"));
+        LLM llm = new LmStudioClient(config.path("url").asText(), config.path("model").asText());
         Map<String, Agent> agents = new AgentFactory(llm).createAllAgents();
         TemporaryContactBook contacts = new TemporaryContactBook("agents/contacts.json");
 
@@ -30,7 +33,14 @@ public class Main {
 
         Email email = new Email(senderAddress, subject, message, date, threadID);
 
-        Intention result = router.RouteMail(email);
+        Intention result;
+        try {
+            result = router.RouteMail(email);
+        } catch (LlmException e) {
+            System.err.println("\n" + e.getMessage());
+            System.exit(1);
+            return;
+        }
 
         if (result.getStatus() == Intention.Status.ACHIEVED) {
             System.out.println("\nReply validated and saved in memory:");

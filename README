@@ -12,7 +12,8 @@ une proposition de réponse à l'aide d'un LLM exécuté localement.
 ## Configuration du LLM
 1. Dans LM Studio, télécharger et charger un modèle (par défaut : google/gemma-4-e4b).
 2. Démarrer le serveur local (onglet Developer -> Start Server, port 1234).
-3. Pour changer de modèle ou d'adresse, modifier `URL` et `MODEL` dans `src/Main.java`.
+3. Pour changer de modèle ou d'adresse, modifier `config.json` à la racine du projet
+   (`url`, et `model` : l'identifiant affiché dans LM Studio). Pas besoin de recompiler.
 
 ## Compilation et exécution (depuis la racine du projet)
 Avec make :
@@ -85,6 +86,7 @@ terminal) : une interface graphique pourra l'implémenter sans changer le reste.
       Belief.java, BeliefBase.java  croyances : contexte de base + mémoire des fils
       LLM.java, LmStudioClient.java interface LLM et client LM Studio
       Email.java, TemporaryContactBook.java
+    config.json                       adresse du serveur LLM et modèle utilisé
     agents/
       <agent>/agent.json              configuration (role, description, mots-clés, fichiers)
       <agent>/attitude_*.txt          system prompt
