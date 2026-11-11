@@ -15,17 +15,22 @@ public class AgentConfig{
     private final String systemPromptFile;
     private final String role;
     private final int maxRetries;
+    private final String description;
+    private final List<String> keywords;
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private AgentConfig(String name, List<String> contextFiles, String memoryFile,
-                        String systemPromptFile, String role, int maxRetries) {
+                        String systemPromptFile, String role, int maxRetries,
+                        String description, List<String> keywords) {
         this.name = name;
         this.contextFiles = contextFiles;
         this.memoryFile = memoryFile;
         this.systemPromptFile = systemPromptFile;
         this.role = role;
         this.maxRetries = maxRetries;
+        this.description = description;
+        this.keywords = keywords;
     }
 
     public String getName()             { return name; }
@@ -34,6 +39,8 @@ public class AgentConfig{
     public String getSystemPromptFile() { return systemPromptFile; }
     public int getMaxRetries()          { return maxRetries; }
     public String getRole()             { return role; }
+    public String getDescription()      { return description; }
+    public List<String> getKeywords()   { return keywords; }
 
     
     public static AgentConfig load(String path) throws IOException {
@@ -44,12 +51,19 @@ public class AgentConfig{
             contextFiles.add(file.asText());
         }
 
+        List<String> keywords = new ArrayList<>();
+        for (JsonNode keyword : root.path("keywords")) {
+            keywords.add(keyword.asText());
+        }
+
         return new AgentConfig(
                 root.path("name").asText(),
                 contextFiles,
                 root.path("beliefs").path("memoryFile").asText(),
                 root.path("attitude").path("systemPromptFile").asText(),
                 root.path("role").asText(),
-                root.path("desires").path("maxRetries").asInt(3));
+                root.path("desires").path("maxRetries").asInt(3),
+                root.path("description").asText(),
+                keywords);
     }
 }

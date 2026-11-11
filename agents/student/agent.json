@@ -1,4 +1,6 @@
 {
+  "description": "Replies to students about courses, practical work (TP), deadlines, submissions and exams.",
+  "keywords": ["TP", "deadline", "submission", "rendu", "retard", "devoir", "Moodle", "student", "etudiant", "cours"],
   "name": "StudentAgent",
   "role": "Student", 
   "beliefs": {

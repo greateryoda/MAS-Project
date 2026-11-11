@@ -1,0 +1,16 @@
+{
+  "description": "Handles emails that do not fit any other category (unknown senders, unclear requests).",
+  "keywords": [],
+  "name": "GenericAgent",
+  "role": "Generic",
+  "beliefs": {
+    "contextFiles": ["agents/generic/base_beliefs_generic.txt"],
+    "memoryFile": "agents/generic/learnt_beliefs_generic.txt"
+  },
+  "attitude": {
+    "systemPromptFile": "agents/generic/attitude_generic.txt"
+  },
+  "desires": {
+    "maxRetries": 3
+  }
+}

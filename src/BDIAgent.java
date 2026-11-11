@@ -10,6 +10,8 @@ public class BDIAgent implements Agent {
     private final BeliefBase beliefs = new BeliefBase();
     private final String systemPrompt;
     private final String memoryFile;
+    private final String description;
+    private final List<String> keywords;
 
     public BDIAgent(String configPath, LLM llm) throws IOException {
         this.llm = llm;
@@ -18,16 +20,24 @@ public class BDIAgent implements Agent {
         this.role = config.getRole();
         this.systemPrompt = Files.readString(Path.of(config.getSystemPromptFile()));
         this.memoryFile = config.getMemoryFile();
+        this.description = config.getDescription();
+        this.keywords = config.getKeywords();
         beliefs.loadContext(config.getContextFiles());
         beliefs.loadMemory(memoryFile);
     }
 
     public String getName() { return name; }
     public String getRole() { return role; }
+    public String getDescription() { return description; }
+    public List<String> getKeywords() { return keywords; }
+
+    // l'agent a deja traite un email de ce fil
+    public boolean knowsThread(int threadID) {
+        return threadID != Belief.NO_THREAD && beliefs.contains(threadID);
+    }
 
     public String handle(Email email) {
         String history = toPromptText(beliefs.get(email.getThreadID()));
-        // System.out.println(history);
 
         String sender = email.getSenderAddress();
         if (email.getSenderName() != null) {

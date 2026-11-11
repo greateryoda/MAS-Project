@@ -1,49 +1,39 @@
+import java.util.List;
 import java.util.Map;
 
 public class RoutingAgent{
+    private static final String FALLBACK_ROLE = "GENERIC";
+    private static final double THRESHOLD = 0.5; // arbitraire
+
     private Map<String, Agent> agents;
     private TemporaryContactBook contacts;
+    private List<RoutingStep> steps;
 
-    public RoutingAgent(Map<String, Agent> agents, TemporaryContactBook contacts){
+    public RoutingAgent(Map<String, Agent> agents, TemporaryContactBook contacts, List<RoutingStep> steps){
         this.agents = agents;
         this.contacts = contacts;
+        this.steps = steps;
     }
 
     public Proposal RouteMail(Email email){
-        Agent agent = selectAgent(email);
+        RoutingDecision decision = decide(email);
+        Agent agent = agents.get(decision.getRole());
         email.setSenderName(contacts.getName(email.getSenderAddress()));
         String draft = agent.handle(email);
-        return new Proposal(email, agent, draft);
+        return new Proposal(email, agent, decision, draft);
     }
 
-    private Agent selectAgent(Email email){
-        String senderAddress = email.getSenderAddress();
-
-        Agent agent = null;
-        String role = contacts.getRole(senderAddress);
-        if (role != null) {
-            agent = agents.get(role);
+    // on essaie les maillons dans l'ordre ; le premier assez sur et dont l'agent existe gagne
+    private RoutingDecision decide(Email email){
+        for (RoutingStep step : steps) {
+            RoutingDecision d = step.decide(email);
+            if (d != null && d.getConfidence() >= THRESHOLD && agents.containsKey(d.getRole())) {
+                return d;
+            }
         }
-        if (agent == null) {
-            agent = agents.get(roleFromDomain(senderAddress));
+        if (!agents.containsKey(FALLBACK_ROLE)) {
+            throw new IllegalStateException("No agent found and no generic agent for: " + email.getSenderAddress());
         }
-        if (agent == null) {
-            throw new IllegalStateException("No agent found for sender: " + senderAddress);
-        }
-        return agent;
-    }
-
-    private String getDomain(String address) {
-        int at = address.lastIndexOf('@');
-        if (at < 0) return "";
-        return address.substring(at + 1).trim().toLowerCase();
-    }
-
-    private String roleFromDomain(String address){
-        return switch (getDomain(address)) {
-            case "etu.univ.fr", "etu.univ-cotedazur.fr" -> "STUDENT";
-            case "univ.fr", "univ-cotedazur.fr"         -> "TEACHER";
-            default                                     -> "UNKNOWN";
-        };
+        return new RoutingDecision(FALLBACK_ROLE, 0.0, "no step was confident enough");
     }
 }

@@ -1,3 +1,4 @@
+import java.util.List;
 import java.util.Map;
 
 public class Main {
@@ -8,7 +9,16 @@ public class Main {
     public static void main(String[] args) throws Exception {
         LLM llm = new LmStudioClient(URL, MODEL);
         Map<String, Agent> agents = new AgentFactory(llm).createAllAgents();
-        RoutingAgent router = new RoutingAgent(agents, new TemporaryContactBook("agents/contacts.json"));
+        TemporaryContactBook contacts = new TemporaryContactBook("agents/contacts.json");
+
+        // ordre de la chaine de routage
+        List<RoutingStep> steps = List.of(
+                new ThreadStep(agents),
+                new ContactStep(contacts),
+                new KeywordStep(agents),
+                new DomainStep(),
+                new LlmClassifierStep(llm, agents));
+        RoutingAgent router = new RoutingAgent(agents, contacts, steps);
 
 
         String subject = "Subject: Concernant le TP";
@@ -21,7 +31,9 @@ public class Main {
 
         Proposal proposal = router.RouteMail(email);
 
-        System.out.println("Router chose: " + proposal.getAgent().getName());
+        System.out.println("Router chose: " + proposal.getAgent().getName()
+                + " (" + proposal.getDecision().getReason()
+                + ", confidence " + proposal.getDecision().getConfidence() + ")");
         System.out.println("----- Draft -----");
         System.out.println(proposal.getDraft());
         

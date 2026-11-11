@@ -1,4 +1,6 @@
 {
+  "description": "Replies to fellow lecturers and researchers about teaching, meetings, juries and department matters.",
+  "keywords": ["meeting", "reunion", "jury", "department", "departement", "colleague", "collegue", "seminar", "seminaire"],
   "name": "TeacherAgent",
   "role": "Teacher", 
   "beliefs": {
