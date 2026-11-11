@@ -1,7 +1,8 @@
 public class Belief{
     public enum Source{
         BASE,
-        EMAIL
+        EMAIL, // email recu
+        REPLY  // reponse envoyee, validee par l'utilisateur
     }
 
     private String content;

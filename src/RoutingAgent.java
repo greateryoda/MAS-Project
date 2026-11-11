@@ -16,21 +16,38 @@ public class RoutingAgent{
     private TemporaryContactBook contacts;
     private List<RoutingStep> steps;
     private Arbiter arbiter; // appele seulement si les signaux sont faibles ou contradictoires
+    private Validator validator; // l'utilisateur, qui valide les brouillons
 
     public RoutingAgent(Map<String, Agent> agents, TemporaryContactBook contacts,
-                        List<RoutingStep> steps, Arbiter arbiter){
+                        List<RoutingStep> steps, Arbiter arbiter, Validator validator){
         this.agents = agents;
         this.contacts = contacts;
         this.steps = steps;
         this.arbiter = arbiter;
+        this.validator = validator;
     }
 
-    public Proposal RouteMail(Email email){
+    // le routeur transmet l'email a l'agent, puis fait l'intermediaire entre l'agent et l'utilisateur
+    // jusqu'a ce que l'intention de l'agent soit atteinte (reponse validee) ou abandonnee
+    public Intention RouteMail(Email email){
         RoutingDecision decision = decide(email);
         Agent agent = agents.get(decision.getRole());
         email.setSenderName(contacts.getName(email.getSenderAddress()));
-        String draft = agent.handle(email);
-        return new Proposal(email, agent, decision, draft);
+
+        Intention intention = agent.adopt(email);
+        while (intention.isActive()) {
+            String draft = agent.draft(intention);
+            Proposal proposal = new Proposal(email, agent, decision, draft,
+                                             intention.getAttempts(), intention.getMaxAttempts());
+            agent.reconsider(intention, validator.review(proposal));
+        }
+
+        // l'agent a abandonne : l'utilisateur peut encore ecrire la reponse lui-meme
+        if (intention.getStatus() == Intention.Status.DROPPED) {
+            String manual = validator.writeReply(email);
+            if (manual != null) agent.reconsider(intention, Feedback.modify(manual));
+        }
+        return intention;
     }
 
     // chaque maillon vote pour un agent ; on additionne les votes par agent

@@ -46,15 +46,39 @@ contradictoires), le LLM local est consulté comme arbitre
 sinon il choisit parmi tous les agents, et son choix l'emporte s'il est assez
 sûr. Sinon, l'email va au `GenericAgent`. La raison de la décision (liste des signaux) est affichée.
 
+## Validation par l'utilisateur
+Chaque brouillon est montré à l'utilisateur dans le terminal, qui peut :
+- **accepter** (`a`) : la réponse est retenue telle quelle ;
+- **modifier** (`m`) : l'utilisateur saisit la version corrigée (terminer par une ligne `.`) ;
+- **refuser** (`r`) : l'utilisateur donne une raison, et l'agent rédige un nouveau
+  brouillon en tenant compte de toutes les remarques.
+
+Côté BDI, l'agent adopte une **intention** (`Intention`) : répondre à l'email.
+Son **désir** est d'obtenir une réponse validée, en au plus `maxRetries` nouveaux
+essais après le premier brouillon (`desires.maxRetries` dans `agent.json`). Le
+plan suivi est : rédiger → soumettre à l'utilisateur → mémoriser si accepté,
+sinon rédiger à nouveau. Au-delà de `maxRetries` refus, l'intention est
+abandonnée : l'utilisateur peut alors écrire la réponse lui-même (elle est
+mémorisée comme une réponse modifiée) ou laisser vide pour ne rien envoyer.
+
+La mémoire du fil n'est mise à jour qu'après validation : l'email reçu et la
+réponse réellement envoyée (éventuellement modifiée) y sont ajoutés. Les
+brouillons refusés ne sont pas mémorisés.
+
+La validation passe par l'interface `Validator` (`ConsoleValidator` pour le
+terminal) : une interface graphique pourra l'implémenter sans changer le reste.
+
 ## Organisation
     src/
       Main.java                     point d'entrée, construction de la chaîne de routage
-      RoutingAgent.java             combine les signaux, choisit l'agent, renvoie la proposition
+      RoutingAgent.java             combine les signaux, choisit l'agent, gère la boucle de validation
       RoutingStep.java              interface d'un signal de routage
       RoutingDecision.java          agent choisi + confiance + raison
       ThreadStep.java, ContactStep.java, KeywordStep.java, DomainStep.java
       Arbiter.java, LlmClassifierStep.java  arbitre (LLM) en cas de doute
-      Proposal.java                 résultat renvoyé à l'utilisateur (email, agent, brouillon)
+      Proposal.java                 brouillon soumis à l'utilisateur (email, agent, brouillon, essai)
+      Validator.java, ConsoleValidator.java, Feedback.java  validation par l'utilisateur
+      Intention.java                intention BDI : répondre à un email (essais, refus, réponse finale)
       Agent.java, BDIAgent.java     agents spécialisés
       AgentFactory.java             crée un agent pour chaque dossier de agents/
       AgentConfig.java              lecture de agent.json
@@ -65,7 +89,7 @@ sûr. Sinon, l'email va au `GenericAgent`. La raison de la décision (liste des 
       <agent>/agent.json              configuration (role, description, mots-clés, fichiers)
       <agent>/attitude_*.txt          system prompt
       <agent>/base_beliefs_*.txt      contexte (format : date | contenu)
-      <agent>/learnt_beliefs_*.txt    mémoire des emails reçus (générée, non versionnée)
+      <agent>/learnt_beliefs_*.txt    mémoire des fils : emails reçus et réponses validées (générée, non versionnée)
       generic/                        agent par défaut quand aucun autre ne convient
       contacts.json                   adresse, nom et rôle des contacts connus
 

@@ -12,6 +12,7 @@ public class BDIAgent implements Agent {
     private final String memoryFile;
     private final String description;
     private final List<String> keywords;
+    private final int maxRetries;
 
     public BDIAgent(String configPath, LLM llm) throws IOException {
         this.llm = llm;
@@ -22,6 +23,7 @@ public class BDIAgent implements Agent {
         this.memoryFile = config.getMemoryFile();
         this.description = config.getDescription();
         this.keywords = config.getKeywords();
+        this.maxRetries = config.getMaxRetries();
         beliefs.loadContext(config.getContextFiles());
         beliefs.loadMemory(memoryFile);
     }
@@ -36,7 +38,12 @@ public class BDIAgent implements Agent {
         return threadID != Belief.NO_THREAD && beliefs.contains(threadID);
     }
 
-    public String handle(Email email) {
+    public Intention adopt(Email email) {
+        return new Intention(email, maxRetries);
+    }
+
+    public String draft(Intention intention) {
+        Email email = intention.getEmail();
         String history = toPromptText(beliefs.get(email.getThreadID()));
 
         String sender = email.getSenderAddress();
@@ -52,22 +59,44 @@ public class BDIAgent implements Agent {
                     + "\n\n" + email.getBody()
                     + "\n\nWrite a reply draft to this email.";
 
+        // apres un refus : on montre le brouillon precedent et les remarques de l'utilisateur
+        if (!intention.getRejections().isEmpty()) {
+            message += "\n\nYOUR PREVIOUS DRAFT:\n" + intention.getDraft()
+                    + "\n\nThe user rejected your drafts with these remarks:\n";
+            for (String reason : intention.getRejections()) {
+                message += "- " + (reason.isBlank() ? "(no reason given)" : reason) + "\n";
+            }
+            message += "Write a new draft that takes all these remarks into account.";
+        }
+
         String answer = llm.ask(systemPrompt, message);
+        intention.newDraft(answer);
+        return answer;
+    }
 
-        Belief new_belief = new Belief("From: " + email.getSenderAddress() + " | Subject: " + email.getSubject() + " | Context: " + email.getBody(),
-                                        Belief.DEFAULT_CONFIDENCE,
-                                        Belief.Source.EMAIL,
-                                        email.getThreadID(),
-                                        email.getDate());
+    public void reconsider(Intention intention, Feedback feedback) {
+        switch (feedback.getType()) {
+            case ACCEPT -> { intention.achieved(intention.getDraft()); commit(intention); }
+            case MODIFY -> { intention.achieved(feedback.getText());   commit(intention); }
+            case REJECT -> intention.rejected(feedback.getText());
+        }
+    }
 
-        beliefs.add(new_belief);
+    // seulement quand l'utilisateur a valide : on memorise l'email recu et la reponse envoyee
+    private void commit(Intention intention) {
+        Email email = intention.getEmail();
+        beliefs.add(new Belief("From: " + email.getSenderAddress() + " | Subject: " + email.getSubject()
+                                + " | Context: " + email.getBody(),
+                               Belief.DEFAULT_CONFIDENCE, Belief.Source.EMAIL,
+                               email.getThreadID(), email.getDate()));
+        beliefs.add(new Belief("To: " + email.getSenderAddress() + " | Reply: " + intention.getFinalReply(),
+                               Belief.DEFAULT_CONFIDENCE, Belief.Source.REPLY,
+                               email.getThreadID(), email.getDate()));
         try {
             beliefs.saveMemory(memoryFile);
         } catch (IOException e) {
             System.err.println("Could not save memory: " + e.getMessage());
         }
-
-        return answer;
     }
 
     private String toPromptText(List<Belief> list) {

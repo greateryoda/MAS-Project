@@ -18,24 +18,25 @@ public class Main {
                 new KeywordStep(agents),
                 new DomainStep(contacts));
         Arbiter arbiter = new LlmClassifierStep(llm, agents);
-        RoutingAgent router = new RoutingAgent(agents, contacts, steps, arbiter);
+        Validator user = new ConsoleValidator();
+        RoutingAgent router = new RoutingAgent(agents, contacts, steps, arbiter, user);
 
 
-        String subject = "Subject: Concernant le TP";
-        String message = "Bonjour monsieur, si je rends le tp un peu en retard, y aura un probleme?";
+        String subject = "Subject: Concernant l'examen";
+        String message = "Bonjour monsieur, pouvez-vous me dire quels sont les parties pouvant tomber dans l'examen? ";
         String senderAddress = "yunus-emre.dogan@etu.univ-cotedazur.fr";
         String date = "18/10/2026";
         int threadID = 3131;
 
         Email email = new Email(senderAddress, subject, message, date, threadID);
 
-        Proposal proposal = router.RouteMail(email);
+        Intention result = router.RouteMail(email);
 
-        System.out.println("Router chose: " + proposal.getAgent().getName()
-                + " (" + proposal.getDecision().getReason()
-                + ", confidence " + proposal.getDecision().getConfidence() + ")");
-        System.out.println("----- Draft -----");
-        System.out.println(proposal.getDraft());
-        
+        if (result.getStatus() == Intention.Status.ACHIEVED) {
+            System.out.println("\nReply validated and saved in memory:");
+            System.out.println(result.getFinalReply());
+        } else {
+            System.out.println("\nNo reply sent (" + result.getAttempts() + " drafts rejected).");
+        }
     }
 }
