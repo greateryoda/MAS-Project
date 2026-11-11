@@ -28,26 +28,51 @@ Sans make :
 
 L'email de test se modifie dans `src/Main.java`.
 
+## Routage
+Le `RoutingAgent` ne s'arrête pas au premier indice : plusieurs signaux votent
+chacun pour un agent, avec une confiance entre 0 et 1.
+
+| Signal        | Classe        | Idée                                          |
+|---------------|---------------|-----------------------------------------------|
+| fil           | `ThreadStep`  | un agent a déjà traité ce fil de discussion   |
+| contact       | `ContactStep` | l'expéditeur est dans `agents/contacts.json`  |
+| mots-clés     | `KeywordStep` | mots-clés de l'agent dans le sujet/corps      |
+| domaine       | `DomainStep`  | domaine de l'adresse, si le contact est inconnu |
+
+Les votes sont additionnés par agent. Si le gagnant a au moins 75 % du total
+(signaux concordants), il est choisi directement. Sinon (signaux faibles ou
+contradictoires), le LLM local est consulté comme arbitre
+(`LlmClassifierStep`) : en cas de conflit il tranche entre les agents concernés,
+sinon il choisit parmi tous les agents, et son choix l'emporte s'il est assez
+sûr. Sinon, l'email va au `GenericAgent`. La raison de la décision (liste des signaux) est affichée.
+
 ## Organisation
     src/
-      Main.java                 point d'entrée
-      RoutingAgent.java         choisit l'agent (carnet de contacts, puis domaine)
-      Agent.java, BDIAgent.java agents spécialisés
-      AgentFactory.java         crée un agent pour chaque dossier de agents/
-      AgentConfig.java          lecture de agent.json
+      Main.java                     point d'entrée, construction de la chaîne de routage
+      RoutingAgent.java             combine les signaux, choisit l'agent, renvoie la proposition
+      RoutingStep.java              interface d'un signal de routage
+      RoutingDecision.java          agent choisi + confiance + raison
+      ThreadStep.java, ContactStep.java, KeywordStep.java, DomainStep.java
+      Arbiter.java, LlmClassifierStep.java  arbitre (LLM) en cas de doute
+      Proposal.java                 résultat renvoyé à l'utilisateur (email, agent, brouillon)
+      Agent.java, BDIAgent.java     agents spécialisés
+      AgentFactory.java             crée un agent pour chaque dossier de agents/
+      AgentConfig.java              lecture de agent.json
       Belief.java, BeliefBase.java  croyances : contexte de base + mémoire des fils
       LLM.java, LmStudioClient.java interface LLM et client LM Studio
       Email.java, TemporaryContactBook.java
     agents/
-      <agent>/agent.json              configuration de l'agent
+      <agent>/agent.json              configuration (role, description, mots-clés, fichiers)
       <agent>/attitude_*.txt          system prompt
       <agent>/base_beliefs_*.txt      contexte (format : date | contenu)
-      <agent>/learnt_beliefs_*.txt    mémoire des emails reçus (générée)
-      contacts.json
+      <agent>/learnt_beliefs_*.txt    mémoire des emails reçus (générée, non versionnée)
+      generic/                        agent par défaut quand aucun autre ne convient
+      contacts.json                   adresse, nom et rôle des contacts connus
 
 ## Ajouter un agent
 Créer un dossier `agents/<nom>/` contenant un `agent.json` (voir les agents
-existants), un fichier de system prompt et un fichier de contexte. L'agent est
-chargé automatiquement au démarrage et reçoit les emails dont le rôle correspond
-à son champ `role`. Pour l'instant, les rôles des contacts sont encore définis
-dans `TemporaryContactBook.java` ; il faut donc y ajouter les adresses concernées.
+existants), un fichier de system prompt et un fichier de contexte. Dans
+`agent.json`, renseigner `description` (utilisée par l'arbitre LLM) et
+`keywords` (utilisés par `KeywordStep`). L'agent est chargé automatiquement au
+démarrage, sans modifier le code. Pour lui associer des expéditeurs connus,
+ajouter leurs adresses avec le même `role` dans `agents/contacts.json`.

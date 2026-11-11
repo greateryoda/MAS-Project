@@ -1,10 +1,11 @@
 import java.util.Map;
+import java.util.Set;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-// Dernier recours : on demande au LLM local quel agent convient le mieux.
-public class LlmClassifierStep implements RoutingStep {
+// Arbitre : on demande au LLM local lequel des agents candidats convient le mieux.
+public class LlmClassifierStep implements Arbiter {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final LLM llm;
@@ -15,11 +16,11 @@ public class LlmClassifierStep implements RoutingStep {
         this.agents = agents;
     }
 
-    public RoutingDecision decide(Email email) {
+    public RoutingDecision choose(Email email, Set<String> candidates) {
         StringBuilder list = new StringBuilder();
-        for (Map.Entry<String, Agent> entry : agents.entrySet()) {
-            list.append("- ").append(entry.getKey()).append(": ")
-                .append(entry.getValue().getDescription()).append("\n");
+        for (String role : candidates) {
+            list.append("- ").append(role).append(": ")
+                .append(agents.get(role).getDescription()).append("\n");
         }
 
         String systemPrompt = "You classify emails. Answer ONLY with JSON like "
@@ -41,7 +42,7 @@ public class LlmClassifierStep implements RoutingStep {
             JsonNode json = MAPPER.readTree(answer.substring(start, end + 1));
             String role = json.path("role").asText().toUpperCase();
             double confidence = json.path("confidence").asDouble(0);
-            if (!agents.containsKey(role)) return null;
+            if (!candidates.contains(role)) return null;
             return new RoutingDecision(role, confidence, "LLM classification");
         } catch (Exception e) {
             return null;

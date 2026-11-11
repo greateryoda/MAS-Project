@@ -11,14 +11,14 @@ public class Main {
         Map<String, Agent> agents = new AgentFactory(llm).createAllAgents();
         TemporaryContactBook contacts = new TemporaryContactBook("agents/contacts.json");
 
-        // ordre de la chaine de routage
+        // signaux de routage (rapides), le LLM ne sert que d'arbitre en cas de doute
         List<RoutingStep> steps = List.of(
                 new ThreadStep(agents),
                 new ContactStep(contacts),
                 new KeywordStep(agents),
-                new DomainStep(),
-                new LlmClassifierStep(llm, agents));
-        RoutingAgent router = new RoutingAgent(agents, contacts, steps);
+                new DomainStep(contacts));
+        Arbiter arbiter = new LlmClassifierStep(llm, agents);
+        RoutingAgent router = new RoutingAgent(agents, contacts, steps, arbiter);
 
 
         String subject = "Subject: Concernant le TP";

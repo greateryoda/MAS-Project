@@ -1,7 +1,15 @@
 // On devine le role a partir du domaine de l'adresse.
 public class DomainStep implements RoutingStep {
+    private final TemporaryContactBook contacts;
+
+    public DomainStep(TemporaryContactBook contacts) {
+        this.contacts = contacts;
+    }
 
     public RoutingDecision decide(Email email) {
+        // contact connu : l'adresse a deja vote via ContactStep, on ne la compte pas deux fois
+        if (contacts.getRole(email.getSenderAddress()) != null) return null;
+
         String domain = getDomain(email.getSenderAddress());
         String role = switch (domain) {
             case "etu.univ.fr", "etu.univ-cotedazur.fr" -> "STUDENT";
