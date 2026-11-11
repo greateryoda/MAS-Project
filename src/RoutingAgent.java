@@ -11,6 +11,7 @@ public class RoutingAgent{
 
     public Proposal RouteMail(Email email){
         Agent agent = selectAgent(email);
+        email.setSenderName(contacts.getName(email.getSenderAddress()));
         String draft = agent.handle(email);
         return new Proposal(email, agent, draft);
     }

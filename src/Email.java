@@ -4,6 +4,7 @@ public class Email {
     private final String body;
     private final String date;
     private final int threadID;
+    private String senderName; // rempli par le routeur depuis le carnet de contacts, null si inconnu
 
     public Email(String senderAddress, String subject, String body, String date, int threadID) {
         this.senderAddress = senderAddress;
@@ -31,5 +32,13 @@ public class Email {
 
     public int getThreadID(){
          return threadID; 
+    }
+
+    public String getSenderName(){
+         return senderName; 
+    }
+
+    public void setSenderName(String senderName){
+         this.senderName = senderName; 
     }
 }

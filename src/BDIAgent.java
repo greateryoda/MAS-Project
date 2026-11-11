@@ -29,8 +29,15 @@ public class BDIAgent implements Agent {
         String history = toPromptText(beliefs.get(email.getThreadID()));
         // System.out.println(history);
 
+        String sender = email.getSenderAddress();
+        if (email.getSenderName() != null) {
+            sender = email.getSenderName() + " <" + sender + ">";
+        } else {
+            sender += " (name unknown: use a neutral greeting, never a placeholder like [Name])";
+        }
+
         String message = "KNOWN INFORMATION AND HISTORY (CONSIDER THE HISTORY WHEN YOU ANSWER):\n" + history
-                    + "\n\nNEW EMAIL:\nFrom: " + email.getSenderAddress()
+                    + "\n\nNEW EMAIL:\nFrom: " + sender
                     + "\nSubject: " + email.getSubject()
                     + "\n\n" + email.getBody()
                     + "\n\nWrite a reply draft to this email.";
