@@ -10,7 +10,7 @@ une proposition de réponse à l'aide d'un LLM exécuté localement.
 - Les bibliothèques Jackson sont fournies dans `lib/`
 
 ## Configuration du LLM
-1. Dans LM Studio, télécharger et charger un modèle (par défaut : `google/gemma-4-e4b`).
+1. Dans LM Studio, télécharger et charger un modèle (par défaut : google/gemma-4-e4b).
 2. Démarrer le serveur local (onglet Developer -> Start Server, port 1234).
 3. Pour changer de modèle ou d'adresse, modifier `URL` et `MODEL` dans `src/Main.java`.
 
