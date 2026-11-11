@@ -9,10 +9,14 @@ public class RoutingAgent{
         this.contacts = contacts;
     }
 
-    public Agent RouteMail(Email email){
+    public Proposal RouteMail(Email email){
+        Agent agent = selectAgent(email);
+        String draft = agent.handle(email);
+        return new Proposal(email, agent, draft);
+    }
+
+    private Agent selectAgent(Email email){
         String senderAddress = email.getSenderAddress();
-        String subject = email.getSubject();
-        String body = email.getBody();
 
         Agent agent = null;
         String role = contacts.getRole(senderAddress);
