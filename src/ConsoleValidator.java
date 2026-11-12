@@ -14,14 +14,19 @@ public class ConsoleValidator implements Validator {
         System.out.println("----- Draft " + p.getAttempt() + "/" + p.getMaxAttempts() + " -----");
         System.out.println(p.getDraft());
         System.out.println("-------------------");
+        if (p.getCritique() != null) {
+            System.out.println("CriticAgent: " + p.getCritique().summary());
+            for (String issue : p.getCritique().getIssues()) System.out.println("  - " + issue);
+        }
 
         while (true) {
-            String choice = ask("[a]ccept / [m]odify / [r]eject: ").trim().toLowerCase();
+            String choice = ask("[a]ccept / [m]odify / [r]eject / [d]iscard: ").trim().toLowerCase();
             switch (choice) {
                 case "a": return Feedback.accept();
                 case "m": return Feedback.modify(readBlock());
                 case "r": return Feedback.reject(ask("Reason: ").trim());
-                default:  System.out.println("Please type a, m or r.");
+                case "d": return Feedback.discard();
+                default:  System.out.println("Please type a, m, r or d.");
             }
         }
     }

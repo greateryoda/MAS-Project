@@ -1,0 +1,8 @@
+2026-03-01 | Members: Sarah Klein (TUM, project coordinator), Marco Rossi (Politecnico di Milano, WP3 lead), Lucas Moreau (Univ. Côte d'Azur, PhD student supervised by Martin), Martin Dupont (WP2 lead)
+2026-09-10 | Deliverable D2.1 "Agent organisation model" (WP2, led by Martin) is due on November 30, 2026
+2026-09-10 | Deliverable D3.1 "Routing benchmark v1" (WP3, led by Marco) is due on December 15, 2026
+2026-09-25 | Paper submission deadline for the AAMAS 2027 workshop: January 20, 2027
+2026-10-01 | Monthly project meeting: second Thursday of each month at 15:00 (CET), online
+2026-10-01 | Next consortium workshop: Lisbon, January 28-29, 2027
+2026-10-10 | Lucas Moreau is running the routing experiments on 3 local models; first results expected mid-November
+2026-10-15 | Martin's availability for project calls: Monday and Friday afternoons; never on Wednesday

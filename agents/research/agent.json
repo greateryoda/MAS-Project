@@ -1,0 +1,38 @@
+{
+  "description": "Handles emails about the SuperMASProject research project: members, deliverables, deadlines, project meetings, tasks, papers and experiments.",
+  "keywords": [
+    "SuperMAS",
+    "SuperMASProject",
+    "project",
+    "projet",
+    "deliverable",
+    "livrable",
+    "paper",
+    "article",
+    "experiment",
+    "experiments",
+    "dataset",
+    "workshop",
+    "milestone",
+    "research",
+    "recherche",
+    "consortium",
+    "partner",
+    "prototype"
+  ],
+  "name": "ResearchProjectAgent",
+  "role": "ResearchProject",
+  "beliefs": {
+    "contextFiles": [
+      "agents/research/project_supermas.txt",
+      "agents/research/base_beliefs_research.txt"
+    ],
+    "memoryFile": "agents/research/learnt_beliefs_research.txt"
+  },
+  "attitude": {
+    "systemPromptFile": "agents/research/attitude_research.txt"
+  },
+  "desires": {
+    "maxRetries": 3
+  }
+}

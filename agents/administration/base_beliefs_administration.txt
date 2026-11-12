@@ -1,0 +1,10 @@
+2026-09-01 | User: Dr. Martin Dupont, Associate Professor, Computer Science Department, martin.dupont@univ.fr, staff number 47812
+2026-09-01 | Student office (scolarite@univ.fr): open Monday to Friday 9:00-12:00, building A, ground floor
+2026-09-01 | Human resources office: rh@univ.fr, appointments on Tuesday and Thursday mornings
+2026-09-01 | Availability for appointments: Monday and Friday afternoons; not available on Wednesday (research day)
+2026-09-15 | MAS course exam grades must be submitted to the student office by December 20
+2026-09-15 | Internship agreements (conventions de stage) are signed electronically on the university platform within 10 working days
+2026-09-20 | Mission orders (ordres de mission) must be requested at least 3 weeks before any travel
+2026-09-20 | Travel reimbursements require original receipts and must be filed within 2 months after the trip
+2026-10-01 | Annual activity report for the department is due on January 15
+2026-10-05 | Pending: mission order for the Lisbon workshop (SuperMASProject, January 2027) not yet submitted

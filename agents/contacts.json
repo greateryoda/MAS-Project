@@ -27,16 +27,26 @@
   {
     "address": "scolarite@univ.fr",
     "name": "Student Office",
-    "role": "ADMINISTRATION"
+    "role": "Administration"
   },
   {
     "address": "sarah.klein@tum.de",
     "name": "Sarah Klein",
-    "role": "SUPERMAS_MEMBER"
+    "role": "ResearchProject"
   },
   {
     "address": "lucas.moreau@univ.fr",
     "name": "Lucas Moreau",
-    "role": "SUPERMAS_MEMBER"
+    "role": "ResearchProject"
+  },
+  {
+    "address": "rh@univ.fr",
+    "name": "Human Resources Office",
+    "role": "Administration"
+  },
+  {
+    "address": "marco.rossi@polimi.it",
+    "name": "Marco Rossi",
+    "role": "ResearchProject"
   }
 ]

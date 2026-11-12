@@ -3,6 +3,8 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -18,6 +20,33 @@ public class LmStudioClient implements LLM{
     public LmStudioClient(String url, String model){
         this.url = url;
         this.model = model;
+    }
+
+    public String getUrl()   { return url; }
+    public String getModel() { return model; }
+
+    public List<String> listModels(){
+        String modelsUrl = url.replace("/chat/completions", "/models");
+        try {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(modelsUrl))
+                    .timeout(Duration.ofSeconds(5))
+                    .GET()
+                    .build();
+            HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() != 200) {
+                throw new LlmException("LLM server answered " + response.statusCode() + " on " + modelsUrl, null);
+            }
+            List<String> models = new ArrayList<>();
+            for (JsonNode m : mapper.readTree(response.body()).path("data")) {
+                models.add(m.path("id").asText());
+            }
+            return models;
+        } catch (LlmException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new LlmException("Could not reach the LLM server at " + modelsUrl + ": " + e, e);
+        }
     }
 
     public String ask(String systemPrompt, String message){

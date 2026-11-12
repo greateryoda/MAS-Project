@@ -1,6 +1,6 @@
 // Reponse de l'utilisateur a une proposition de brouillon.
 public class Feedback {
-    public enum Type { ACCEPT, MODIFY, REJECT }
+    public enum Type { ACCEPT, MODIFY, REJECT, DISCARD }
 
     private final Type type;
     private final String text; // MODIFY : reponse corrigee, REJECT : raison du refus, ACCEPT : null
@@ -13,6 +13,7 @@ public class Feedback {
     public static Feedback accept()              { return new Feedback(Type.ACCEPT, null); }
     public static Feedback modify(String reply)  { return new Feedback(Type.MODIFY, reply); }
     public static Feedback reject(String reason) { return new Feedback(Type.REJECT, reason); }
+    public static Feedback discard()             { return new Feedback(Type.DISCARD, null); }
 
     public Type getType()   { return type; }
     public String getText() { return text; }

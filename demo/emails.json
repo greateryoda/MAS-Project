@@ -1,0 +1,50 @@
+[
+  {
+    "label": "1. Student - question about the exam",
+    "address": "luca.martin@etu.univ.fr",
+    "name": "Luca Martin",
+    "threadId": 1001,
+    "subject": "Question about the final exam",
+    "body": "Hello Dr. Dupont,\n\nI am preparing the final exam of the Multi-Agent Systems course. Could you tell me which chapters will be covered, and whether we are allowed to bring notes?\n\nThank you in advance,\nLuca"
+  },
+  {
+    "label": "2. Teacher - meeting proposal",
+    "address": "claire.bernard@univ.fr",
+    "name": "Claire Bernard",
+    "threadId": 1002,
+    "subject": "Meeting about the M2 AI jury",
+    "body": "Hi Martin,\n\nWe need to prepare the M2 AI exam jury of December. Could we have a short meeting next week with the other colleagues of the department? Wednesday morning would suit me.\n\nBest,\nClaire"
+  },
+  {
+    "label": "3. Administration - documents and deadline",
+    "address": "scolarite@univ.fr",
+    "name": "Student Office",
+    "threadId": 1003,
+    "subject": "Grade submission and internship agreements to sign",
+    "body": "Dear Dr. Dupont,\n\nWe kindly remind you that the grades of the MAS course must be submitted to the student office. In addition, two internship agreements (conventions de stage) are waiting for your signature on the platform.\n\nCould you also confirm an appointment to review the registration file of a student?\n\nBest regards,\nStudent Office"
+  },
+  {
+    "label": "4. Research - SuperMASProject",
+    "address": "sarah.klein@tum.de",
+    "name": "Sarah Klein",
+    "threadId": 1004,
+    "subject": "SuperMASProject - status of deliverable D2.1",
+    "body": "Dear Martin,\n\nAs coordinator of SuperMASProject, I am collecting the status of all deliverables before the next project meeting. Could you send me a short update on D2.1 and tell me whether Lucas has first results from the routing experiments?\n\nBest regards,\nSarah"
+  },
+  {
+    "label": "5. Ambiguous - workshop registration",
+    "address": "j.morel@univ-cotedazur.fr",
+    "name": "Julie Morel",
+    "threadId": 1005,
+    "subject": "Registration for the workshop in Lisbon",
+    "body": "Hello,\n\nI am organising the trip to the Lisbon workshop. Could you send me your registration form and tell me if you need a mission order? I also wonder whether the project will cover the travel costs.\n\nThanks,\nJulie Morel"
+  },
+  {
+    "label": "6. Follow-up of email 1 (same thread)",
+    "address": "luca.martin@etu.univ.fr",
+    "name": "Luca Martin",
+    "threadId": 1001,
+    "subject": "Re: Question about the final exam",
+    "body": "Thank you for your answer. Just to be sure: is the exam room the same as for the lectures?\n\nLuca"
+  }
+]

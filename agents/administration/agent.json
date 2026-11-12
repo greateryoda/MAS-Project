@@ -1,0 +1,43 @@
+{
+  "description": "Replies to the university administration (student office, HR, finance) about registrations, official documents, forms to sign, administrative deadlines and appointments.",
+  "keywords": [
+    "inscription",
+    "registration",
+    "enrolment",
+    "enrollment",
+    "attestation",
+    "certificate",
+    "certificat",
+    "document",
+    "documents",
+    "dossier",
+    "formulaire",
+    "form",
+    "signature",
+    "sign",
+    "administratif",
+    "administrative",
+    "scolarite",
+    "rendez-vous",
+    "appointment",
+    "convention",
+    "reimbursement",
+    "remboursement",
+    "ordre de mission",
+    "mission order"
+  ],
+  "name": "AdministrationAgent",
+  "role": "Administration",
+  "beliefs": {
+    "contextFiles": [
+      "agents/administration/base_beliefs_administration.txt"
+    ],
+    "memoryFile": "agents/administration/learnt_beliefs_administration.txt"
+  },
+  "attitude": {
+    "systemPromptFile": "agents/administration/attitude_administration.txt"
+  },
+  "desires": {
+    "maxRetries": 2
+  }
+}

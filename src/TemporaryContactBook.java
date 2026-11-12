@@ -1,7 +1,9 @@
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -28,6 +30,15 @@ public class TemporaryContactBook {
     
     public String getRole(String address) {
         return roles.get(address.trim().toLowerCase());
+    }
+
+    public List<String> addressesWithRole(String role) {
+        List<String> list = new ArrayList<>();
+        for (Map.Entry<String, String> e : roles.entrySet()) {
+            if (e.getValue().equalsIgnoreCase(role)) list.add(names.get(e.getKey()) + " <" + e.getKey() + ">");
+        }
+        list.sort(null);
+        return list;
     }
 
     public String getName(String address) {

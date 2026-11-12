@@ -1,3 +1,4 @@
+import java.io.IOException;
 import java.util.List;
 
 public interface Agent{
@@ -5,7 +6,11 @@ public interface Agent{
     public String getRole();
     public String getDescription();
     public List<String> getKeywords();
+    public String getSystemPrompt();
     public boolean knowsThread(int threadID);
+
+    public List<Belief> recall(int threadID);
+    public void reload() throws IOException;
 
     // desir -> intention : l'agent s'engage a repondre a cet email
     public Intention adopt(Email email);

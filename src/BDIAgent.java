@@ -4,37 +4,52 @@ import java.nio.file.Path;
 import java.util.List;
 
 public class BDIAgent implements Agent {
-    private final String name;
-    private final String role;
+    private final String configPath;
     private final LLM llm;
     private final BeliefBase beliefs = new BeliefBase();
-    private final String systemPrompt;
     private final String memoryFile;
-    private final String description;
-    private final List<String> keywords;
-    private final int maxRetries;
+    private final String name;
+    private final String role;
+    private volatile String systemPrompt;
+    private volatile String description;
+    private volatile List<String> keywords;
+    private volatile int maxRetries;
 
     public BDIAgent(String configPath, LLM llm) throws IOException {
+        this.configPath = configPath;
         this.llm = llm;
         AgentConfig config = AgentConfig.load(configPath);
         this.name = config.getName();
         this.role = config.getRole();
-        this.systemPrompt = Files.readString(Path.of(config.getSystemPromptFile()));
         this.memoryFile = config.getMemoryFile();
+        applyConfig(config);
+        beliefs.loadMemory(memoryFile);
+    }
+
+    public synchronized void reload() throws IOException {
+        applyConfig(AgentConfig.load(configPath));
+    }
+
+    private void applyConfig(AgentConfig config) throws IOException {
+        this.systemPrompt = Files.readString(Path.of(config.getSystemPromptFile()));
         this.description = config.getDescription();
-        this.keywords = config.getKeywords();
+        this.keywords = List.copyOf(config.getKeywords());
         this.maxRetries = config.getMaxRetries();
         beliefs.loadContext(config.getContextFiles());
-        beliefs.loadMemory(memoryFile);
     }
 
     public String getName() { return name; }
     public String getRole() { return role; }
     public String getDescription() { return description; }
     public List<String> getKeywords() { return keywords; }
+    public String getSystemPrompt() { return systemPrompt; }
+
+    public synchronized List<Belief> recall(int threadID) {
+        return beliefs.get(threadID);
+    }
 
     // l'agent a deja traite un email de ce fil
-    public boolean knowsThread(int threadID) {
+    public synchronized boolean knowsThread(int threadID) {
         return threadID != Belief.NO_THREAD && beliefs.contains(threadID);
     }
 
@@ -44,7 +59,7 @@ public class BDIAgent implements Agent {
 
     public String draft(Intention intention) {
         Email email = intention.getEmail();
-        String history = toPromptText(beliefs.get(email.getThreadID()));
+        String history = toPromptText(recall(email.getThreadID()));
 
         String sender = email.getSenderAddress();
         if (email.getSenderName() != null) {
@@ -79,11 +94,12 @@ public class BDIAgent implements Agent {
             case ACCEPT -> { intention.achieved(intention.getDraft()); commit(intention); }
             case MODIFY -> { intention.achieved(feedback.getText());   commit(intention); }
             case REJECT -> intention.rejected(feedback.getText());
+            case DISCARD -> intention.discarded();
         }
     }
 
     // seulement quand l'utilisateur a valide : on memorise l'email recu et la reponse envoyee
-    private void commit(Intention intention) {
+    private synchronized void commit(Intention intention) {
         Email email = intention.getEmail();
         beliefs.add(new Belief("From: " + email.getSenderAddress() + " | Subject: " + email.getSubject()
                                 + " | Context: " + email.getBody(),

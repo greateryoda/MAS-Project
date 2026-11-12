@@ -1,0 +1,6 @@
+2026-03-01 | Project: SuperMASProject, a 3-year research project (March 2026 - February 2029) on cooperative multi-agent systems using small local language models
+2026-03-01 | Objective 1: design agent organisations where several specialised local LLM agents outperform a single model
+2026-03-01 | Objective 2: build an open benchmark of email and dialogue tasks for agent routing
+2026-03-01 | Objective 3: study confidentiality and context isolation between agents
+2026-03-01 | Work packages: WP1 Management (coordinator TUM), WP2 Agent organisation (lead Univ. Côte d'Azur - Martin Dupont), WP3 Benchmark and datasets (lead Politecnico di Milano), WP4 Evaluation and dissemination (lead TUM)
+2026-03-01 | Results of the project are confidential until publication; data sharing only between members

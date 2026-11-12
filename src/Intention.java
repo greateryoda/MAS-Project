@@ -10,7 +10,7 @@ import java.util.List;
 //      refuse            -> retour a l'etape 1 avec la raison du refus
 //      trop de refus     -> intention abandonnee, rien n'est memorise
 public class Intention {
-    public enum Status { ACTIVE, ACHIEVED, DROPPED }
+    public enum Status { ACTIVE, ACHIEVED, DROPPED, DISCARDED }
 
     private final Email email;
     private final int maxAttempts;
@@ -33,6 +33,10 @@ public class Intention {
     public void rejected(String reason) {
         rejections.add(reason);
         if (attempts >= maxAttempts) status = Status.DROPPED;
+    }
+
+    public void discarded() {
+        status = Status.DISCARDED;
     }
 
     public void achieved(String reply) {
