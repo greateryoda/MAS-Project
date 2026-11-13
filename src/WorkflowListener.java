@@ -13,6 +13,9 @@ public interface WorkflowListener {
     // contexte retenu par l'agent pour cet email
     default void contextSelected(Agent agent, ContextSelection context) {}
 
+    // collaboration : un agent contributeur a repondu (ou echoue) sur sa partie de l'email
+    default void contributionProduced(Agent contributor, Contribution contribution) {}
+
     // un brouillon vient d'etre redige (critique : null si le CriticAgent est desactive)
     default void draftProduced(int attempt, String draft, Critique critique, long generationMillis) {}
 

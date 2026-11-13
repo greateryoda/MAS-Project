@@ -69,10 +69,15 @@ public class WorkflowPanel extends Card {
         rows.get(WorkflowStage.GENERATION).setActor(name + " with the local LLM");
     }
 
+    public void setContributors(String names) {
+        rows.get(WorkflowStage.COLLABORATION).setActor(names.isBlank() ? WorkflowStage.COLLABORATION.getActor() : names);
+    }
+
     public void update(WorkflowStage stage, StageStatus status, String detail) {
         rows.get(stage).update(status, detail);
         if (stage == WorkflowStage.VALIDATION && status != StageStatus.PROCESSING) stop();
-        if (status == StageStatus.FAILED && stage != WorkflowStage.CRITIC) stop();
+        if (status == StageStatus.FAILED && stage != WorkflowStage.CRITIC
+            && stage != WorkflowStage.COLLABORATION) stop();
     }
 
     public void stop() {

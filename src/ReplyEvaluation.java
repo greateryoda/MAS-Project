@@ -29,10 +29,12 @@ public class ReplyEvaluation {
         CONFIGS.put("multi-agent-all-context", "routing + specialised agent, all of its context sent (no selection)");
         CONFIGS.put("oracle-routing", "the expected agent answers directly (isolates drafting from routing errors)");
         CONFIGS.put("single-agent", "baseline: one generic prompt, the context of every agent, no routing");
+        CONFIGS.put("multi-agent-no-collab", "like multi-agent, but a single agent answers even when the email concerns several");
     }
 
+    // contributors : agents contributeurs (collaboration), vide si un seul agent a repondu
     public record Result(LabelledEmail email, String config, String agentRole, String draft,
-                         int contextChars, long promptChars, long millis, Critique judge) {
+                         int contextChars, long promptChars, long millis, Critique judge, List<String> contributors) {
         public boolean routedCorrectly() { return agentRole == null || email.accepts(agentRole); }
     }
 
@@ -45,6 +47,7 @@ public class ReplyEvaluation {
         public double meanMillis()    { return results.stream().mapToLong(Result::millis).average().orElse(0); }
         public long errors()          { return results.stream().filter(r -> r.draft() == null).count(); }
         public long unjudged()        { return results.size() - judged().size(); }
+        public long collaborations()  { return results.stream().filter(r -> !r.contributors().isEmpty()).count(); }
     }
 
     private final LLM llm;
@@ -68,7 +71,7 @@ public class ReplyEvaluation {
         RoutingAgent router = null;
         Agent single = null;
         switch (config) {
-            case "multi-agent", "oracle-routing" ->
+            case "multi-agent", "oracle-routing", "multi-agent-no-collab" ->
                     registry = new AgentRegistry(new File("agents"), new AgentFactory(drafting, selectors));
             case "multi-agent-all-context" ->
                     registry = new AgentRegistry(new File("agents"),
@@ -81,6 +84,7 @@ public class ReplyEvaluation {
             // l'arbitre utilise le LLM non mesure : on ne compte que le cout de la redaction
             router = new RoutingAgent(registry.getAgents(), contacts, EmailAssistant.defaultSteps(registry, contacts),
                                       new LlmClassifierStep(llm, registry.getAgents()), null);
+            if (config.equals("multi-agent-no-collab")) router.setMaxCollaborators(0);
         }
 
         List<Result> results = new ArrayList<>();
@@ -88,11 +92,13 @@ public class ReplyEvaluation {
             Email email = item.toEmail();
             String role = null;
             Agent agent;
+            RoutingDecision decision = null;
             try {
                 if (single != null) {
                     agent = single;
                 } else if (router != null) {
-                    role = router.classify(email).decision().getRole();
+                    decision = router.classify(email).decision();
+                    role = decision.getRole();
                     agent = registry.get(role);
                 } else {
                     role = item.expected();
@@ -100,13 +106,20 @@ public class ReplyEvaluation {
                 }
                 int contextChars = agent.selectContext(email).chars();
                 MeteredLLM.Snapshot before = drafting.snapshot();
-                String draft = agent.draft(agent.adopt(email));
+                Intention intention = agent.adopt(email);
+                // collaboration : les contributions sont comptees dans le cout de la redaction
+                List<Contribution> contributions = decision == null ? List.of()
+                        : router.collaborate(email, agent, decision);
+                intention.setContributions(contributions);
+                String draft = agent.draft(intention);
                 MeteredLLM.Snapshot cost = drafting.snapshot().minus(before);
+                List<String> contributors = contributions.stream().filter(Contribution::available)
+                        .map(Contribution::role).toList();
                 results.add(new Result(item, config, role, draft, contextChars, cost.promptChars(), cost.millis(),
-                                       judge(email, item, draft)));
+                                       judge(email, item, draft), contributors));
             } catch (RuntimeException e) {
                 System.err.println("  " + item.id() + ": " + e.getMessage());
-                results.add(new Result(item, config, role, null, 0, 0, 0, Critique.unavailable(e.getMessage())));
+                results.add(new Result(item, config, role, null, 0, 0, 0, Critique.unavailable(e.getMessage()), List.of()));
             }
             System.out.print(".");
         }
@@ -114,11 +127,18 @@ public class ReplyEvaluation {
         return new ConfigResult(config, results);
     }
 
+    // juge : regles de l'agent attendu ; faits connus = contexte complet de l'agent attendu et, pour un
+    // email ambigu, des autres agents acceptables (sinon une information correcte apportee par un
+    // contributeur serait comptee comme inventee, et l'oubli d'une partie de l'email ne serait pas vu)
     private Critique judge(Email email, LabelledEmail item, String draft) {
         Agent expected = reference.get(item.expected());
         if (expected == null) return Critique.unavailable("unknown expected agent " + item.expected());
-        return judge.review(email, expected.getName(), expected.getSystemPrompt(),
-                            expected.recall(Belief.NO_THREAD), draft);
+        List<Belief> knowledge = new ArrayList<>(expected.recall(Belief.NO_THREAD));
+        for (String role : item.acceptable()) {
+            Agent other = reference.get(role);
+            if (other != null && other != expected) knowledge.addAll(other.recall(Belief.NO_THREAD));
+        }
+        return judge.review(email, expected.getName(), expected.getSystemPrompt(), knowledge, draft);
     }
 
     // agent unique de reference : construit avec le meme framework (BDIAgent), mais avec un prompt
@@ -180,12 +200,14 @@ public class ReplyEvaluation {
                     Result x = r.results().get(i);
                     String cell = x.judge() != null && x.judge().isAvailable() ? String.valueOf(x.judge().getScore()) : "-";
                     if (!x.routedCorrectly()) cell += " (" + x.agentRole() + ")";
+                    if (!x.contributors().isEmpty()) cell += " +" + String.join("+", x.contributors());
                     md.append(" ").append(cell).append(" |");
                 }
                 md.append("\n");
             }
         }
-        md.append("\nA role in parentheses means the email was routed to a wrong agent.\n");
+        md.append("\nA role in parentheses means the email was routed to a wrong agent; "
+                + "\"+ROLE\" means that agent contributed to the reply (collaboration).\n");
         return md.toString();
     }
 
@@ -199,6 +221,8 @@ public class ReplyEvaluation {
                 n.put("id", x.email().id());
                 n.put("expected", x.email().expected());
                 n.put("routedTo", x.agentRole());
+                ArrayNode contributors = n.putArray("contributors");
+                x.contributors().forEach(contributors::add);
                 n.put("subject", x.email().subject());
                 n.put("draft", x.draft());
                 n.put("contextChars", x.contextChars());

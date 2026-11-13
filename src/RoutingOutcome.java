@@ -11,14 +11,22 @@ public record RoutingOutcome(RoutingDecision decision, Map<String, Double> score
         return decision.getConfidence() == 0.0 && RoutingAgent.FALLBACK_ROLE.equals(decision.getRole());
     }
 
+    public boolean collaborative() {
+        return decision.isCollaborative();
+    }
+
     // explication lisible du choix, pour l'utilisateur et le journal
     public String explanation() {
         String role = decision.getRole();
         if (fallback()) return "No agent was suitable enough: fallback to " + role;
         if (arbiterConsulted) {
-            return "Signals were " + (scores.size() > 1 ? "conflicting " + scores.keySet() : "too weak")
+            String text = "Signals were " + (scores.size() > 1 ? "conflicting " + scores.keySet() : "too weak")
                     + ": the LLM arbiter chose " + role
                     + String.format(Locale.ROOT, " (confidence %.2f)", decision.getConfidence());
+            for (RoutingDecision.Collaborator c : decision.getCollaborators()) {
+                text += ", with " + c.role() + " contributing on \"" + c.part() + "\"";
+            }
+            return text;
         }
         double total = scores.values().stream().mapToDouble(Double::doubleValue).sum();
         return String.format(Locale.ROOT, "%s chosen without the LLM: %.0f%% of the votes (score %.2f of %.2f)",

@@ -2,6 +2,7 @@ import java.awt.Dimension;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
@@ -20,6 +21,7 @@ public class ProcessPage extends Page {
     private final RoutingPanel routing;
     private final ProposalPanel proposal = new ProposalPanel();
     private Agent selectedAgent;
+    private String contributors = ""; // collaboration : noms des agents contributeurs
     private boolean busy;
 
     public ProcessPage(EmailAssistant assistant, SwingValidator validator, List<DemoEmail> demos,
@@ -54,7 +56,9 @@ public class ProcessPage extends Page {
                                       List<String> signals, boolean arbiter) {
                 SwingUtilities.invokeLater(() -> {
                     selectedAgent = agent;
+                    contributors = contributorNames(decision);
                     workflow.setAgentName(agent.getName());
+                    workflow.setContributors(contributors);
                     routing.showDecision(agent, decision, scores, signals, arbiter);
                 });
             }
@@ -88,6 +92,7 @@ public class ProcessPage extends Page {
         }
         busy = true;
         selectedAgent = null;
+        contributors = "";
         compose.setBusy(true);
         routing.reset();
         workflow.reset();
@@ -102,6 +107,7 @@ public class ProcessPage extends Page {
                 busy = false;
                 compose.setBusy(false);
                 String agentName = selectedAgent != null ? selectedAgent.getName() : "-";
+                if (!contributors.isBlank()) agentName += " + " + contributors;
                 try {
                     Intention intention = get();
                     proposal.showOutcome(intention, selectedAgent);
@@ -123,11 +129,20 @@ public class ProcessPage extends Page {
         if (s != StageStatus.PROCESSING) return;
         String agent = selectedAgent != null ? selectedAgent.getName() : "The agent";
         switch (stage) {
-            case ROUTING -> proposal.showWaiting(detail + "...");
+            case ROUTING, COLLABORATION -> proposal.showWaiting(detail + "...");
             case GENERATION -> proposal.showWaiting(agent + " is writing a draft with the local LLM...");
             case CRITIC -> proposal.showWaiting("CriticAgent is reviewing the draft...");
             default -> { }
         }
+    }
+
+    private String contributorNames(RoutingDecision decision) {
+        List<String> names = new ArrayList<>();
+        for (RoutingDecision.Collaborator c : decision.getCollaborators()) {
+            Agent a = assistant.getRegistry().get(c.role());
+            names.add(a != null ? a.getName() : c.role());
+        }
+        return String.join(", ", names);
     }
 
     private GridBagConstraints constraints(int x, int y, int w, int h, double wx, double wy, Insets insets) {

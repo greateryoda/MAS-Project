@@ -17,12 +17,19 @@ public class RoutingEvaluation {
         CONFIGS.put("llm-only", "no signal: the LLM classifies every email among all agents");
         CONFIGS.put("no-keywords", "sender signals only (thread, contact, domain) + LLM arbiter");
         CONFIGS.put("content-only", "keywords only (sender ignored) + LLM arbiter");
+        CONFIGS.put("no-collaboration", "like full, but the arbiter may not ask several agents to collaborate");
     }
 
+    // collaborators : agents contributeurs choisis en plus de l'agent principal (vide le plus souvent)
     public record Result(LabelledEmail email, String predicted, boolean arbiter, boolean fallback,
-                         long millis, String explanation) {
+                         long millis, String explanation, List<String> collaborators) {
         public boolean strict()  { return email.expected().equals(predicted); }
         public boolean lenient() { return email.accepts(predicted); }
+        public boolean collaborative() { return !collaborators.isEmpty(); }
+        // collaboration pertinente : chaque contributeur fait partie des agents acceptables de l'email
+        public boolean relevantCollaboration() {
+            return collaborative() && collaborators.stream().allMatch(email::accepts);
+        }
     }
 
     public record ConfigResult(String config, List<Result> results, MeteredLLM.Snapshot llm) {
@@ -31,6 +38,18 @@ public class RoutingEvaluation {
         public double arbiterRate()     { return rate(results.stream().filter(Result::arbiter).count()); }
         public double fallbackRate()    { return rate(results.stream().filter(Result::fallback).count()); }
         public double meanMillis()      { return results.stream().mapToLong(Result::millis).average().orElse(0); }
+        public double collaborationRate() { return rate(results.stream().filter(Result::collaborative).count()); }
+        // part des collaborations dont tous les contributeurs sont pertinents (NaN : aucune collaboration)
+        public double collaborationPrecision() {
+            long n = results.stream().filter(Result::collaborative).count();
+            return n == 0 ? Double.NaN : results.stream().filter(Result::relevantCollaboration).count() / (double) n;
+        }
+        // emails ambigus (plusieurs agents acceptables) pour lesquels plusieurs agents ont collabore
+        public double ambiguousCoverage() {
+            List<Result> ambiguous = results.stream().filter(r -> r.email().acceptable().size() > 1).toList();
+            return ambiguous.isEmpty() ? Double.NaN
+                    : ambiguous.stream().filter(Result::relevantCollaboration).count() / (double) ambiguous.size();
+        }
 
         public double accuracy(String category) {
             List<Result> subset = results.stream().filter(r -> r.email().category().equals(category)).toList();
@@ -78,14 +97,17 @@ public class RoutingEvaluation {
         Arbiter llmArbiter = new LlmClassifierStep(arbiterLlm, agents);
         Arbiter noArbiter = (email, candidates) -> null;
         List<RoutingStep> steps = switch (config) {
-            case "full", "rules-only" -> EmailAssistant.defaultSteps(registry, contacts);
+            case "full", "rules-only", "no-collaboration" -> EmailAssistant.defaultSteps(registry, contacts);
             case "llm-only" -> List.of();
             case "no-keywords" -> List.of(new ThreadStep(agents), new ContactStep(contacts), new DomainStep(contacts));
             case "content-only" -> List.of(new KeywordStep(agents));
             default -> throw new IllegalArgumentException("Unknown routing configuration: " + config
                                                           + " (expected one of " + CONFIGS.keySet() + ")");
         };
-        return new RoutingAgent(agents, contacts, steps, config.equals("rules-only") ? noArbiter : llmArbiter, null);
+        RoutingAgent router = new RoutingAgent(agents, contacts, steps,
+                                               config.equals("rules-only") ? noArbiter : llmArbiter, null);
+        if (config.equals("no-collaboration")) router.setMaxCollaborators(0);
+        return router;
     }
 
     public ConfigResult run(String config, List<LabelledEmail> dataset) {
@@ -95,10 +117,12 @@ public class RoutingEvaluation {
         for (LabelledEmail item : dataset) {
             try {
                 RoutingOutcome o = router.classify(item.toEmail());
+                List<String> helpers = o.decision().getCollaborators().stream()
+                        .map(RoutingDecision.Collaborator::role).toList();
                 results.add(new Result(item, o.decision().getRole(), o.arbiterConsulted(), o.fallback(),
-                                       o.millis(), o.explanation()));
+                                       o.millis(), o.explanation(), helpers));
             } catch (RuntimeException e) {
-                results.add(new Result(item, "ERROR", false, false, 0, e.getMessage()));
+                results.add(new Result(item, "ERROR", false, false, 0, e.getMessage(), List.of()));
             }
         }
         return new ConfigResult(config, results, meter.snapshot());
@@ -115,16 +139,37 @@ public class RoutingEvaluation {
         md.append("- Strict = the expected agent; lenient = any agent listed as acceptable for an ambiguous email\n\n");
 
         md.append("## Summary\n\n");
-        md.append("| Configuration | Strict acc. | Lenient acc. | Arbiter calls | Fallback | LLM calls | Mean ms/email |\n");
-        md.append("|---|---|---|---|---|---|---|\n");
+        md.append("| Configuration | Strict acc. | Lenient acc. | Arbiter calls | Fallback | Collaboration | LLM calls | Mean ms/email |\n");
+        md.append("|---|---|---|---|---|---|---|---|\n");
         for (ConfigResult r : runs) {
-            md.append(String.format(Locale.ROOT, "| %s | %s | %s | %s | %s | %d | %.0f |\n", r.config(),
+            md.append(String.format(Locale.ROOT, "| %s | %s | %s | %s | %s | %s | %d | %.0f |\n", r.config(),
                     pct(r.strictAccuracy()), pct(r.lenientAccuracy()), pct(r.arbiterRate()),
-                    pct(r.fallbackRate()), r.llm().calls(), r.meanMillis()));
+                    pct(r.fallbackRate()), pct(r.collaborationRate()), r.llm().calls(), r.meanMillis()));
         }
         md.append("\n");
         for (ConfigResult r : runs) md.append("- **").append(r.config()).append("**: ")
                                      .append(CONFIGS.getOrDefault(r.config(), "")).append("\n");
+
+        // collaboration entre agents (piste 6) : quand plusieurs agents repondent ensemble
+        md.append("\n## Collaboration between agents\n\n");
+        md.append("Relevant = every contributing agent is listed as acceptable for the email. "
+                + "Ambiguous coverage = share of the emails with several acceptable agents answered by a relevant collaboration.\n\n");
+        md.append("| Configuration | Collaborations | Relevant | Ambiguous coverage |\n|---|---|---|---|\n");
+        for (ConfigResult r : runs) {
+            long n = r.results().stream().filter(Result::collaborative).count();
+            md.append(String.format(Locale.ROOT, "| %s | %d | %s | %s |\n", r.config(), n,
+                    pct(r.collaborationPrecision()), pct(r.ambiguousCoverage())));
+        }
+        for (ConfigResult r : runs) {
+            List<Result> collab = r.results().stream().filter(Result::collaborative).toList();
+            if (collab.isEmpty()) continue;
+            md.append("\n").append(r.config()).append(":\n\n");
+            for (Result x : collab) {
+                md.append("- `").append(x.email().id()).append("` ").append(x.email().subject()).append(": **")
+                  .append(x.predicted()).append("** + ").append(String.join(", ", x.collaborators()))
+                  .append(x.relevantCollaboration() ? "" : " (not relevant)").append("\n");
+            }
+        }
 
         TreeSet<String> categories = new TreeSet<>();
         runs.forEach(r -> r.results().forEach(x -> categories.add(x.email().category())));
@@ -176,12 +221,13 @@ public class RoutingEvaluation {
     }
 
     public static String csv(List<ConfigResult> runs) {
-        StringBuilder csv = new StringBuilder("config,id,category,expected,predicted,strict,lenient,arbiter,fallback,millis\n");
+        StringBuilder csv = new StringBuilder("config,id,category,expected,predicted,strict,lenient,arbiter,fallback,millis,collaborators\n");
         for (ConfigResult r : runs) {
             for (Result x : r.results()) {
                 csv.append(String.join(",", r.config(), x.email().id(), x.email().category(), x.email().expected(),
                         x.predicted(), String.valueOf(x.strict()), String.valueOf(x.lenient()),
-                        String.valueOf(x.arbiter()), String.valueOf(x.fallback()), String.valueOf(x.millis())))
+                        String.valueOf(x.arbiter()), String.valueOf(x.fallback()), String.valueOf(x.millis()),
+                        String.join("+", x.collaborators())))
                    .append("\n");
             }
         }

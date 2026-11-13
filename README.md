@@ -29,12 +29,13 @@ Multi-Agent Email Response System*).
   "critic":    { "enabled": true, "systemPromptFile": "critic/attitude_critic.txt" },
   "context":   { "strategy": "lexical", "maxBeliefs": 8, "maxThreadMessages": 6 },
   "embedding": { "model": "" },
+  "collaboration": { "enabled": true, "maxAgents": 2 },
   "log":       { "enabled": true, "file": "logs/decisions.jsonl", "includeText": false }
 }
 ```
 
-`context`, `embedding` et `log` sont optionnels (voir *Sélection du contexte* et
-*Journal des décisions*). Pour la stratégie `embedding`, charger aussi un modèle
+`context`, `embedding`, `collaboration` et `log` sont optionnels (voir *Sélection du
+contexte*, *Collaboration entre agents* et *Journal des décisions*). Pour la stratégie `embedding`, charger aussi un modèle
 d'embedding dans LM Studio (par ex. `text-embedding-nomic-embed-text-v1.5`) et
 renseigner son identifiant dans `embedding.model`.
 
@@ -71,7 +72,7 @@ L'application doit être lancée **depuis la racine du projet** (les chemins de
 | Page | Contenu |
 |------|---------|
 | Dashboard | agents chargés, état du LLM, statistiques de la session, activité récente, stratégie de routage |
-| Process email | saisie (ou chargement d'un email de démonstration), aperçu, traitement, visualisation du workflow en 10 étapes (Pending / Processing / Completed / Failed / Skipped), décision de routage (agent, confiance, signaux, agents impliqués, graphe des interactions), proposition de réponse et validation |
+| Process email | saisie (ou chargement d'un email de démonstration), aperçu, traitement, visualisation du workflow en 11 étapes (Pending / Processing / Completed / Failed / Skipped), décision de routage (agent, confiance, signaux, agents impliqués et contributeurs, graphe des interactions), proposition de réponse (bouton *Contributions* en cas de collaboration) et validation |
 | Agents | liste des agents ; modification de la description, des mots-clés, de `maxRetries`, du system prompt et du contexte ; import d'un fichier texte comme contexte ; consultation de la mémoire ; création d'un nouvel agent |
 | Local LLM | serveur, modèle, connexion, prompt de test, `config.json`, activation et prompt du CriticAgent |
 
@@ -84,7 +85,7 @@ et appliquées immédiatement (l'agent relit sa configuration sans perdre sa mé
 2. enseignante, proposition de réunion → `TeacherAgent`
 3. scolarité, documents et échéance → `AdministrationAgent`
 4. coordinatrice du projet SuperMASProject → `ResearchProjectAgent`
-5. email ambigu (inscription à un workshop du projet, expéditeur inconnu) → conflit de signaux, arbitrage par le LLM
+5. email ambigu (inscription à un workshop du projet, expéditeur inconnu) → conflit de signaux, arbitrage par le LLM ; s'il le juge utile, collaboration : `AdministrationAgent` rédige (formulaire, ordre de mission) avec la contribution de `ResearchProjectAgent` (prise en charge des frais par le projet)
 6. relance de l'email 1 dans le même fil → reconnu grâce à la mémoire du fil (à traiter après avoir accepté l'email 1)
 
 ## Routage
@@ -104,6 +105,34 @@ Les votes sont additionnés par agent. Si le gagnant a au moins 75 % du total
 (`LlmClassifierStep`) : en cas de conflit il tranche entre les agents concernés,
 sinon il choisit parmi tous les agents, et son choix l'emporte s'il est assez
 sûr (≥ 0,6). Sinon, l'email va au `GenericAgent`.
+
+## Collaboration entre agents
+Que se passe-t-il quand plusieurs agents conviennent ? Plutôt que d'en choisir un seul,
+le `RoutingAgent` peut faire répondre plusieurs agents, chacun sur sa partie de l'email.
+
+1. **Détection (règles).** Un agent est *concerné* s'il a voté ou si l'un de ses mots-clés
+   apparaît dans l'email (`RoutingStep.concerned` ; `KeywordStep` signale tous les agents
+   dont un mot-clé est trouvé, pas seulement le gagnant). La collaboration n'est proposée
+   que si au moins deux agents sont concernés **et** que les signaux ne suffisent pas
+   (arbitre consulté). Un email clair ne coûte donc aucun appel de plus.
+2. **Répartition (LLM).** L'arbitre choisit l'agent **principal** et, seulement si l'email
+   contient une demande distincte relevant d'un autre agent concerné, des **contributeurs**
+   avec la partie de l'email qui revient à chacun. Le `RoutingAgent` ne garde que des
+   contributeurs crédibles : agents concernés, différents de l'agent principal et du
+   `GenericAgent`, avec une partie décrite, dans la limite `maxAgents - 1`.
+3. **Contributions.** Étape *Collaboration* du workflow : chaque contributeur
+   (`Agent.contribute`) rédige une courte note factuelle sur sa partie, avec **ses** règles
+   et **son** contexte, à l'intention de l'agent principal (`Contribution`).
+4. **Fusion.** L'agent principal rédige une réponse unique, avec son ton, en intégrant les
+   notes (rattachées à son `Intention`). Le CriticAgent reçoit aussi les notes : une
+   information apportée par un contributeur n'est pas comptée comme inventée.
+5. **Validation.** Inchangée. Après un refus, seul l'agent principal rédige à nouveau,
+   les contributions sont réutilisées. Seul l'agent principal mémorise le fil : une relance
+   lui revient (`ThreadStep`), et il connaît déjà la réponse fusionnée.
+
+Un contributeur en panne n'arrête pas le traitement (étape *Collaboration* en échec,
+l'agent principal répond seul). `"collaboration": {"enabled": false}` dans `config.json`
+désactive le mécanisme ; `maxAgents` compte l'agent principal (2 = un contributeur au plus).
 
 ## Sélection du contexte
 Un petit modèle local a une fenêtre de contexte limitée et se laisse distraire par les
@@ -128,6 +157,7 @@ Le CriticAgent relit le brouillon avec ce même contexte.
 dans `logs/decisions.jsonl`. Chaque ligne contient :
 - les signaux, les votes par agent, le recours à l'arbitre et l'explication du choix ;
 - le contexte retenu (stratégie, nombre de croyances, taille) ;
+- en cas de collaboration, les contributeurs, leur partie et leur contribution (taille, durée, erreur) ;
 - chaque brouillon (durée, note et remarques du critique, décision de l'utilisateur, raison d'un refus) ;
 - l'issue finale et les durées.
 
@@ -162,11 +192,14 @@ Les rapports sont écrits dans `eval/results/` (Markdown pour le rapport, CSV/JS
 | `llm-only` | aucun signal : le LLM classe chaque email (approche « un seul modèle ») |
 | `no-keywords` | signaux liés à l'expéditeur seulement + arbitre |
 | `content-only` | mots-clés seulement (expéditeur ignoré) + arbitre |
+| `no-collaboration` | comme `full`, sans collaboration entre agents |
 
 Mesures :
 - exactitude stricte et souple, exactitude par catégorie ;
 - matrice de confusion, précision / rappel / F1 par agent ;
 - taux d'appel à l'arbitre et de repli, nombre d'appels au LLM, temps moyen ;
+- collaboration : taux, part des collaborations pertinentes (tous les contributeurs sont
+  des agents acceptables pour l'email), couverture des emails ambigus ;
 - liste des erreurs avec l'explication du routeur.
 
 **Réponses** (`ReplyEvaluation`) : teste l'hypothèse du projet.
@@ -177,11 +210,15 @@ Mesures :
 | `multi-agent-all-context` | idem, tout le contexte de l'agent (mesure l'effet de la sélection) |
 | `oracle-routing` | l'agent attendu répond directement (isole la rédaction des erreurs de routage) |
 | `single-agent` | référence : un seul prompt générique (`eval/single_agent_prompt.txt`) et le contexte de tous les agents, construit avec le même `BDIAgent` |
+| `multi-agent-no-collab` | comme `multi-agent`, mais un seul agent répond même si l'email en concerne plusieurs |
 
 Chaque brouillon est noté par un juge (prompt du CriticAgent) qui reçoit les règles et
-**tout** le contexte de l'agent attendu, quelle que soit la configuration. Mesures : note
+**tout** le contexte de l'agent attendu (et, pour un email ambigu, celui des autres agents
+acceptables), quelle que soit la configuration. Mesures : note
 moyenne /10, taux d'approbation, taille du contexte et du prompt (`MeteredLLM`), temps de
-génération. Le juge étant lui-même un LLM local, il est conseillé d'utiliser un modèle
+génération (contributions comprises). Comparer `multi-agent` et `multi-agent-no-collab`
+sur les emails ambigus (`--configs multi-agent,multi-agent-no-collab`) mesure l'apport de la
+collaboration. Le juge étant lui-même un LLM local, il est conseillé d'utiliser un modèle
 différent (`--judge-model`) et de relire un échantillon des brouillons (`replies-*.json`).
 
 ## Agents
@@ -230,7 +267,8 @@ brouillons refusés ne sont jamais mémorisés.
       AppConfig.java                lecture de config.json
       Evaluation.java, RoutingEvaluation.java, ReplyEvaluation.java, LabelledEmail.java,
       MeteredLLM.java               expériences (routage, réponses, journal)
-      RoutingDecision.java          agent choisi + confiance + raison
+      RoutingDecision.java          agent choisi + confiance + raison (+ contributeurs en cas de collaboration)
+      Contribution.java             note d'un agent contributeur sur sa partie de l'email
       WorkflowListener.java, WorkflowStage.java, StageStatus.java  observation des étapes (interface)
       Agent.java, BDIAgent.java     agents spécialisés
       AgentFactory.java             crée un BDIAgent à partir d'un dossier de agents/
@@ -249,7 +287,7 @@ brouillons refusés ne sont jamais mémorisés.
       Theme.java, Card.java, PillButton.java, Badge.java, Avatar.java, NavIcon.java,
       RoundBorder.java, ThinScrollBarUI.java, ScrollablePanel.java   composants visuels
     test/ScenarioTests.java         scénarios automatiques (make test)
-    config.json                     adresse du serveur LLM, modèle, CriticAgent
+    config.json                     adresse du serveur LLM, modèle, CriticAgent, collaboration...
     critic/attitude_critic.txt      system prompt du CriticAgent
     demo/emails.json                emails de démonstration
     eval/dataset.json               jeu de test étiqueté (30 emails)
@@ -282,4 +320,6 @@ agents, routage des 5 emails de démonstration, arbitrage, fallback générique,
 acceptation / modification / nouveau brouillon / refus / abandon, mémoire du fil,
 CriticAgent, ordre des étapes du workflow, panne du LLM, création et modification
 d'agents, sélection du contexte (lexicale, embeddings simulés, repli, réglage par agent),
-journal des décisions et son rapport, banc d'expérimentation (toutes les configurations). Ces tests ne remplacent pas un essai avec un vrai modèle dans LM Studio.
+journal des décisions et son rapport, banc d'expérimentation (toutes les configurations),
+collaboration entre agents (répartition, filtrage des contributeurs, fusion, critique,
+nouveau brouillon, mémoire, panne d'un contributeur, désactivation, journal, expériences). Ces tests ne remplacent pas un essai avec un vrai modèle dans LM Studio.

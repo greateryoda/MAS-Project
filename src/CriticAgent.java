@@ -36,16 +36,28 @@ public class CriticAgent {
 
     // relit le brouillon avec les regles de l'agent et le contexte qu'il a reellement recu
     public Critique review(Email email, Agent author, String draft) {
+        return review(email, author, draft, List.of());
+    }
+
+    // collaboration : les informations fournies par les agents contributeurs font partie
+    // des faits connus (sinon le critique les prendrait pour des faits inventes)
+    public Critique review(Email email, Agent author, String draft, List<Contribution> contributions) {
         return review(email, author.getName(), author.getSystemPrompt(),
-                      author.selectContext(email).all(), draft);
+                      author.selectContext(email).all(), contributions, draft);
     }
 
     // version generique : sert aussi de juge dans les experiences (Evaluation), ou l'on note
     // les reponses de plusieurs configurations avec les regles et le contexte de l'agent attendu
     public Critique review(Email email, String authorName, String rules, List<Belief> knowledge, String draft) {
+        return review(email, authorName, rules, knowledge, List.of(), draft);
+    }
+
+    public Critique review(Email email, String authorName, String rules, List<Belief> knowledge,
+                           List<Contribution> contributions, String draft) {
         String message = "RULES GIVEN TO THE AGENT THAT WROTE THE DRAFT (" + authorName + "):\n"
                 + rules
                 + "\n\nINFORMATION KNOWN BY THIS AGENT:\n" + knowledge(knowledge)
+                + contributions(contributions)
                 + "\nEMAIL RECEIVED:\nFrom: " + email.getSenderAddress()
                 + "\nSubject: " + email.getSubject()
                 + "\n\n" + email.getBody()
@@ -77,6 +89,17 @@ public class CriticAgent {
         } catch (IOException e) {
             return Critique.unavailable("the critic answer is not valid JSON");
         }
+    }
+
+    private String contributions(List<Contribution> contributions) {
+        StringBuilder sb = new StringBuilder();
+        for (Contribution c : contributions) {
+            if (!c.available()) continue;
+            if (sb.length() == 0) sb.append("\nINFORMATION PROVIDED BY OTHER SPECIALIZED AGENTS (reliable facts for their part):\n");
+            sb.append("- ").append(c.agentName()).append(", about \"").append(c.part()).append("\": ")
+              .append(c.text().trim().replace("\n", " ")).append("\n");
+        }
+        return sb.toString();
     }
 
     private String knowledge(List<Belief> beliefs) {

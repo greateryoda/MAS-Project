@@ -9,12 +9,15 @@ import java.util.List;
 //   3. accepte / modifie -> intention atteinte, la reponse est memorisee
 //      refuse            -> retour a l'etape 1 avec la raison du refus
 //      trop de refus     -> intention abandonnee, rien n'est memorise
+// Email qui concerne plusieurs agents : les contributions des agents contributeurs sont
+// rattachees a l'intention avant le premier brouillon ; l'agent principal les fusionne.
 public class Intention {
     public enum Status { ACTIVE, ACHIEVED, DROPPED, DISCARDED }
 
     private final Email email;
     private final int maxAttempts;
     private final List<String> rejections = new ArrayList<>(); // raisons des refus, dans l'ordre
+    private List<Contribution> contributions = List.of();     // collaboration : notes des autres agents
     private int attempts = 0;
     private String draft;
     private String finalReply;
@@ -35,6 +38,10 @@ public class Intention {
         if (attempts >= maxAttempts) status = Status.DROPPED;
     }
 
+    public void setContributions(List<Contribution> contributions) {
+        this.contributions = List.copyOf(contributions);
+    }
+
     public void discarded() {
         status = Status.DISCARDED;
     }
@@ -50,6 +57,7 @@ public class Intention {
     public String getDraft()           { return draft; }
     public String getFinalReply()      { return finalReply; }
     public List<String> getRejections(){ return rejections; }
+    public List<Contribution> getContributions() { return contributions; }
     public int getAttempts()           { return attempts; }
     public int getMaxAttempts()        { return maxAttempts; }
 }

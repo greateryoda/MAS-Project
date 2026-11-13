@@ -17,14 +17,23 @@ public class ScenarioTests {
         int classifierCalls = 0;
         int criticCalls = 0;
         int drafts = 0;
+        int contributions = 0;
         boolean down = false;
+        boolean contributionsDown = false;
+        String collabAnswer = null; // reponse de l'arbitre quand la collaboration est possible
 
         public String ask(String systemPrompt, String message) {
             if (down) throw new LlmException("LLM server stopped", null);
             systemPrompts.add(systemPrompt);
             messages.add(message);
+            if (message.startsWith("COLLABORATION REQUEST")) {
+                if (contributionsDown) throw new LlmException("contributor timeout", null);
+                contributions++;
+                return "RESEARCH-NOTE " + contributions + ": the SuperMAS budget covers the travel costs.";
+            }
             if (systemPrompt.startsWith("You classify emails")) {
                 classifierCalls++;
+                if (collabAnswer != null && systemPrompt.contains("collaborators")) return collabAnswer;
                 String role = message.contains("- ADMINISTRATION:") && message.contains("registration form")
                         ? "ADMINISTRATION" : "GENERIC";
                 return "Sure: {\"role\": \"" + role + "\", \"confidence\": 0.82}";
@@ -252,6 +261,175 @@ public class ScenarioTests {
               && ReplyEvaluation.json(rr).contains("\"draft\""), "");
     }
 
+    // ---------- piste 6 : collaboration entre agents ----------
+    static final String COLLAB = "{\"role\": \"ADMINISTRATION\", \"confidence\": 0.85, \"collaborators\": "
+            + "[{\"role\": \"RESEARCHPROJECT\", \"part\": \"whether the project covers the travel costs\"}]}";
+
+    static int indexOf(List<String> list, String prefix) {
+        for (int i = 0; i < list.size(); i++) if (list.get(i).startsWith(prefix)) return i;
+        return -1;
+    }
+
+    static void collaboration(List<DemoEmail> demo) throws Exception {
+        System.out.println("16. Collaboration between agents");
+        Email ambiguous = demo.get(4).toEmail(); // workshop : inscription (administration) + frais du projet (recherche)
+
+        // l'arbitre ne propose pas de collaboration : un seul agent, comme avant
+        Setup s = setup(false);
+        s.validator().answers.add(Feedback.discard());
+        s.assistant().process(ambiguous);
+        int arbiterCall = indexOf(s.llm().systemPrompts, "You classify emails");
+        String arbiterMessage = arbiterCall < 0 ? "" : s.llm().messages.get(arbiterCall);
+        check("several agents concerned: the arbiter may propose contributors",
+              s.llm().systemPrompts.get(arbiterCall).contains("collaborators")
+              && arbiterMessage.contains("Agents that may contribute") && arbiterMessage.contains("- RESEARCHPROJECT:"),
+              arbiterMessage);
+        check("no contributor proposed -> single agent, collaboration skipped",
+              "ADMINISTRATION".equals(s.events().selected) && s.events().events.contains("COLLABORATION:SKIPPED")
+              && s.validator().proposals.get(0).getContributions().isEmpty() && s.llm().contributions == 0,
+              s.events().events.toString());
+
+        // collaboration : l'administration redige, le projet de recherche contribue sur les frais
+        s = setup(true);
+        s.llm().collabAnswer = COLLAB;
+        s.validator().answers.add(Feedback.reject("Shorter please"));
+        s.validator().answers.add(Feedback.accept());
+        Intention it = s.assistant().process(ambiguous);
+        Proposal first = s.validator().proposals.get(0);
+        List<RoutingDecision.Collaborator> helpers = first.getDecision().getCollaborators();
+        check("main agent + contributor chosen", "ADMINISTRATION".equals(s.events().selected) && helpers.size() == 1
+              && helpers.get(0).role().equals("RESEARCHPROJECT") && first.getDecision().getReason().contains("collaboration: RESEARCHPROJECT"),
+              helpers.toString());
+        int ask = indexOf(s.llm().messages, "COLLABORATION REQUEST");
+        Agent research = s.assistant().getRegistry().get("RESEARCHPROJECT");
+        check("contributor asked with its own rules, for its part only", ask >= 0
+              && s.llm().systemPrompts.get(ask).equals(research.getSystemPrompt())
+              && s.llm().messages.get(ask).contains("whether the project covers the travel costs")
+              && s.llm().messages.get(ask).contains("AdministrationAgent"), ask < 0 ? "not asked" : s.llm().messages.get(ask));
+        String leadPrompt = s.llm().messages.get(ask + 1);
+        check("main agent merges the contribution in its draft",
+              leadPrompt.contains("CONTRIBUTIONS FROM OTHER SPECIALIZED AGENTS") && leadPrompt.contains("RESEARCH-NOTE 1")
+              && s.llm().systemPrompts.get(ask + 1).equals(s.assistant().getRegistry().get("ADMINISTRATION").getSystemPrompt()),
+              leadPrompt);
+        check("critic knows the contributed facts", s.llm().messages.stream().anyMatch(m -> m.contains("RULES GIVEN TO THE AGENT")
+              && m.contains("INFORMATION PROVIDED BY OTHER SPECIALIZED AGENTS") && m.contains("RESEARCH-NOTE 1")), "");
+        check("proposal shows the contribution", first.getContributions().size() == 1 && first.getContributions().get(0).available()
+              && first.getContributions().get(0).agentName().equals("ResearchProjectAgent"), first.getContributions().toString());
+        List<String> ev = s.events().events;
+        check("collaboration stage between context and generation",
+              ev.indexOf("CONTEXT:COMPLETED") < ev.indexOf("COLLABORATION:PROCESSING")
+              && ev.indexOf("COLLABORATION:PROCESSING") < ev.indexOf("COLLABORATION:COMPLETED")
+              && ev.indexOf("COLLABORATION:COMPLETED") < ev.indexOf("GENERATION:PROCESSING"), ev.toString());
+        String lastDraft = s.llm().messages.get(s.llm().messages.size() - 2); // le dernier appel est la critique
+        check("new draft after a rejection keeps the contribution, contributor asked once",
+              it.getAttempts() == 2 && s.llm().contributions == 1 && s.validator().proposals.get(1).getContributions().size() == 1
+              && lastDraft.contains("RESEARCH-NOTE 1") && lastDraft.contains("Shorter please"), "contributions=" + s.llm().contributions);
+        String adminMemory = s.assistant().getRegistry().readMemory("ADMINISTRATION");
+        String researchMemory = s.assistant().getRegistry().readMemory("RESEARCHPROJECT");
+        check("only the main agent memorises the thread", it.getStatus() == Intention.Status.ACHIEVED
+              && adminMemory.contains("1005|REPLY") && !researchMemory.contains("1005|"), researchMemory);
+        RoutingOutcome followUp = s.assistant().getRouter().classify(new Email("j.morel@univ-cotedazur.fr",
+                "Re: Registration for the workshop in Lisbon", "Thank you!", "02/12/2026", 1005));
+        check("follow-up in the thread goes back to the main agent",
+              followUp.signals().stream().anyMatch(x -> x.startsWith("thread already handled by AdministrationAgent")), followUp.signals().toString());
+
+        // filtrage des contributeurs proposes par le LLM
+        s = setup(false);
+        s.llm().collabAnswer = "{\"role\": \"ADMINISTRATION\", \"confidence\": 0.8, \"collaborators\": ["
+                + "{\"role\": \"GENERIC\", \"part\": \"x\"}, {\"role\": \"ADMINISTRATION\", \"part\": \"x\"},"
+                + "{\"role\": \"STUDENT\", \"part\": \"x\"}, {\"role\": \"NOBODY\", \"part\": \"x\"},"
+                + "{\"role\": \"RESEARCHPROJECT\", \"part\": \"\"}, {\"role\": \"researchproject\", \"part\": \"travel costs\"},"
+                + "{\"role\": \"TEACHER\", \"part\": \"second contributor, over the limit\"}]}";
+        s.validator().answers.add(Feedback.discard());
+        s.assistant().process(ambiguous);
+        helpers = s.validator().proposals.get(0).getDecision().getCollaborators();
+        check("invalid contributors filtered (generic, main agent, not concerned, unknown, no part) and limit applied",
+              helpers.size() == 1 && helpers.get(0).role().equals("RESEARCHPROJECT") && helpers.get(0).part().equals("travel costs"),
+              helpers.toString());
+
+        s = setup(false);
+        s.llm().collabAnswer = COLLAB;
+        s.assistant().getRouter().setMaxCollaborators(0);
+        s.validator().answers.add(Feedback.discard());
+        s.assistant().process(ambiguous);
+        arbiterCall = indexOf(s.llm().systemPrompts, "You classify emails");
+        check("collaboration disabled: arbiter not offered it, single agent",
+              !s.llm().systemPrompts.get(arbiterCall).contains("collaborators") && s.llm().contributions == 0
+              && s.validator().proposals.get(0).getContributions().isEmpty(), "");
+
+        s = setup(false);
+        s.llm().collabAnswer = COLLAB;
+        s.validator().answers.add(Feedback.discard());
+        s.assistant().process(new Email("someone@example.com", "Hello", "Are you available?", "01/12/2026", 1998));
+        arbiterCall = indexOf(s.llm().systemPrompts, "You classify emails");
+        check("one agent concerned at most: no collaboration offered",
+              !s.llm().systemPrompts.get(arbiterCall).contains("collaborators") && s.llm().contributions == 0, "");
+
+        // un contributeur en panne n'empeche pas la reponse
+        s = setup(false);
+        s.llm().collabAnswer = COLLAB;
+        s.llm().contributionsDown = true;
+        it = s.assistant().process(ambiguous);
+        Contribution failedNote = s.validator().proposals.get(0).getContributions().get(0);
+        check("contributor failure: main agent answers alone", it.getStatus() == Intention.Status.ACHIEVED
+              && !failedNote.available() && failedNote.error().contains("timeout")
+              && s.events().events.contains("COLLABORATION:FAILED") && !s.llm().messages.get(s.llm().messages.size() - 1).contains("CONTRIBUTIONS FROM"),
+              s.events().events.toString());
+
+        // journal des decisions
+        Path file = Path.of("logs/test-collaboration.jsonl");
+        Files.deleteIfExists(file);
+        s = setup(false);
+        s.llm().collabAnswer = COLLAB;
+        s.assistant().addListener(new DecisionLogger(file.toString(), "scripted", false));
+        s.validator().answers.add(Feedback.discard());
+        s.assistant().process(ambiguous);
+        var entry = DecisionLogReport.read(file).get(0);
+        check("collaboration logged (contributors, parts, contributions)",
+              entry.path("routing").path("collaborators").path(0).path("role").asText().equals("RESEARCHPROJECT")
+              && entry.path("contributions").path(0).path("available").asBoolean()
+              && entry.path("contributions").path(0).path("chars").asInt() > 0
+              && !entry.path("contributions").path(0).has("text")
+              && entry.path("routing").path("explanation").asText().contains("RESEARCHPROJECT contributing"), entry.toString());
+        check("log report counts collaborations",
+              DecisionLogReport.markdown(DecisionLogReport.read(file), file.toString()).contains("Collaboration between agents: 100% (1)"), "");
+
+        // configuration
+        Path config = Files.createTempFile("config", ".json");
+        Files.writeString(config, "{\"url\": \"http://127.0.0.1:1/v1/chat/completions\", \"model\": \"m\","
+                + " \"log\": {\"enabled\": false}, \"collaboration\": {\"enabled\": false}}");
+        int disabled = AppConfig.load(config.toString()).assistant(new ScriptedLlm(), new ScriptedValidator()).getRouter().getMaxCollaborators();
+        Files.writeString(config, "{\"url\": \"http://127.0.0.1:1/v1/chat/completions\", \"model\": \"m\", \"log\": {\"enabled\": false}}");
+        int byDefault = AppConfig.load(config.toString()).assistant(new ScriptedLlm(), new ScriptedValidator()).getRouter().getMaxCollaborators();
+        check("config.json: collaboration enabled by default (1 contributor), can be disabled", disabled == 0 && byDefault == 1,
+              disabled + " / " + byDefault);
+
+        // experiences
+        List<LabelledEmail> dataset = LabelledEmail.load("eval/dataset.json");
+        ScriptedLlm llm = new ScriptedLlm();
+        llm.collabAnswer = COLLAB;
+        AgentRegistry registry = new AgentRegistry(new File("agents"), new AgentFactory(llm));
+        TemporaryContactBook contacts = new TemporaryContactBook("agents/contacts.json");
+        RoutingEvaluation routing = new RoutingEvaluation(registry, contacts, llm);
+        RoutingEvaluation.ConfigResult full = routing.run("full", dataset);
+        RoutingEvaluation.ConfigResult none = routing.run("no-collaboration", dataset);
+        RoutingEvaluation.Result x01 = full.results().stream().filter(r -> r.email().id().equals("X01")).findFirst().orElseThrow();
+        check("routing evaluation: collaboration measured, X01 relevant", full.collaborationRate() > 0 && none.collaborationRate() == 0
+              && x01.relevantCollaboration() && x01.predicted().equals("ADMINISTRATION"), x01.collaborators().toString());
+        String md = RoutingEvaluation.markdown(List.of(full, none), "scripted", "eval/dataset.json");
+        check("routing report has a collaboration section", md.contains("## Collaboration between agents")
+              && md.contains("`X01`") && RoutingEvaluation.csv(List.of(full)).contains("RESEARCHPROJECT\n"), "");
+        CriticAgent judge = new CriticAgent(llm, "critic/attitude_critic.txt", true);
+        ReplyEvaluation replies = new ReplyEvaluation(llm, ContextSelectorFactory.defaults(), judge, registry, contacts);
+        List<LabelledEmail> x = dataset.stream().filter(e -> e.id().equals("X01")).toList();
+        ReplyEvaluation.ConfigResult multi = replies.run("multi-agent", x);
+        ReplyEvaluation.ConfigResult alone = replies.run("multi-agent-no-collab", x);
+        check("reply evaluation compares with and without collaboration",
+              multi.collaborations() == 1 && alone.collaborations() == 0 && multi.meanPrompt() > alone.meanPrompt()
+              && ReplyEvaluation.markdown(List.of(multi, alone), "s", "s", "d").contains("+RESEARCHPROJECT"),
+              multi.collaborations() + " / " + alone.collaborations());
+    }
+
     public static void main(String[] args) throws Exception {
         clearMemory();
         List<DemoEmail> demo = DemoEmail.load("demo/emails.json");
@@ -392,6 +570,7 @@ public class ScenarioTests {
         contextSelection(demo);
         decisionLog(demo);
         evaluation();
+        collaboration(demo);
 
         System.out.println();
         System.out.println(passed + " passed, " + failed + " failed");
