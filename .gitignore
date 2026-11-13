@@ -18,3 +18,7 @@ agents/*/learnt_beliefs_*.txt
 
 
 *.log
+
+
+logs/
+eval/results/

@@ -17,9 +17,22 @@ public class BeliefBase{
     public List<Belief> get(int threadID){
         List<Belief> information_required = new ArrayList<>();
         information_required.addAll(byThread.getOrDefault(Belief.NO_THREAD, List.of())); // si la cle existe, retourn la, sinon retourne une liste vide via List.of()
-        information_required.addAll(byThread.getOrDefault(threadID, List.of()));
+        if (threadID != Belief.NO_THREAD) { // sinon le contexte de base serait ajoute deux fois
+            information_required.addAll(byThread.getOrDefault(threadID, List.of()));
+        }
 
         return information_required;
+    }
+
+    // croyances de base (fichiers de contexte de l'agent)
+    public List<Belief> base(){
+        return new ArrayList<>(byThread.getOrDefault(Belief.NO_THREAD, List.of()));
+    }
+
+    // messages memorises d'un fil, du plus ancien au plus recent
+    public List<Belief> thread(int threadID){
+        if (threadID == Belief.NO_THREAD) return new ArrayList<>();
+        return new ArrayList<>(byThread.getOrDefault(threadID, List.of()));
     }
 
     public boolean contains(int threadID){

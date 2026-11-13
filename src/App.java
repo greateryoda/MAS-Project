@@ -1,11 +1,7 @@
-import java.io.File;
 import java.util.List;
 
 import javax.swing.JOptionPane;
 import javax.swing.SwingUtilities;
-
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 
 public class App {
 
@@ -16,13 +12,10 @@ public class App {
     private static void start() {
         Theme.install();
         try {
-            JsonNode config = new ObjectMapper().readTree(new File("config.json"));
-            LmStudioClient llm = new LmStudioClient(config.path("url").asText(), config.path("model").asText());
-            JsonNode critic = config.path("critic");
+            AppConfig config = AppConfig.load("config.json");
+            LmStudioClient llm = config.llm();
             SwingValidator validator = new SwingValidator();
-            EmailAssistant assistant = new EmailAssistant(llm, validator,
-                    critic.path("systemPromptFile").asText("critic/attitude_critic.txt"),
-                    critic.path("enabled").asBoolean(true));
+            EmailAssistant assistant = config.assistant(llm, validator);
             List<DemoEmail> demos = DemoEmail.load("demo/emails.json");
             new MainWindow(assistant, llm, validator, demos).setVisible(true);
         } catch (Exception e) {

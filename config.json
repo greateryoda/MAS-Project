@@ -1,12 +1,21 @@
 {
- "url": "http://127.0.0.1:1234/v1/chat/completions",
- "model": "google/gemma-4-e4b",
- "critic": {
-   "enabled": true,
-   "systemPromptFile": "critic/attitude_critic.txt"
- }
+  "url": "http://127.0.0.1:1234/v1/chat/completions",
+  "model": "google/gemma-4-e4b",
+  "critic": {
+    "enabled": true,
+    "systemPromptFile": "critic/attitude_critic.txt"
+  },
+  "context": {
+    "strategy": "lexical",
+    "maxBeliefs": 8,
+    "maxThreadMessages": 6
+  },
+  "embedding": {
+    "model": ""
+  },
+  "log": {
+    "enabled": true,
+    "file": "logs/decisions.jsonl",
+    "includeText": false
+  }
 }
-
-
-
-

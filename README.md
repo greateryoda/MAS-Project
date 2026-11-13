@@ -26,9 +26,17 @@ Multi-Agent Email Response System*).
 {
   "url": "http://127.0.0.1:1234/v1/chat/completions",
   "model": "google/gemma-4-e4b",
-  "critic": { "enabled": true, "systemPromptFile": "critic/attitude_critic.txt" }
+  "critic":    { "enabled": true, "systemPromptFile": "critic/attitude_critic.txt" },
+  "context":   { "strategy": "lexical", "maxBeliefs": 8, "maxThreadMessages": 6 },
+  "embedding": { "model": "" },
+  "log":       { "enabled": true, "file": "logs/decisions.jsonl", "includeText": false }
 }
 ```
+
+`context`, `embedding` et `log` sont optionnels (voir *Sélection du contexte* et
+*Journal des décisions*). Pour la stratégie `embedding`, charger aussi un modèle
+d'embedding dans LM Studio (par ex. `text-embedding-nomic-embed-text-v1.5`) et
+renseigner son identifiant dans `embedding.model`.
 
 La page **Local LLM** de l'interface affiche l'adresse, le modèle configuré, l'état de la
 connexion et la liste des modèles disponibles sur le serveur, et permet d'envoyer un
@@ -41,6 +49,9 @@ Avec make :
     make gui        # idem
     make console    # ancienne version terminal (Main.java)
     make test       # scénarios de test automatiques (LLM simulé, sans LM Studio)
+    make eval-routing   # expérience de routage (LLM réel), voir « Expériences »
+    make eval-replies   # expérience sur les réponses (ARGS="--limit 6")
+    make eval-log       # statistiques du journal des décisions
     make build      # compile seulement
     make clean      # supprime bin/, bin-test/ et build/
 
@@ -50,7 +61,8 @@ Sans make (macOS / Linux) :
     java -cp "bin:lib/*" App          # interface graphique
     java -cp "bin:lib/*" Main         # version terminal
 
-Sous Windows, remplacer `:` par `;` dans le classpath : `java -cp "bin;lib/*" App`.
+Sous Windows, remplacer `:` par `;` dans le classpath : `java -cp "bin;lib/*" App`
+(le Makefile choisit le bon séparateur automatiquement).
 
 L'application doit être lancée **depuis la racine du projet** (les chemins de
 `config.json` et de `agents/` sont relatifs).
@@ -93,6 +105,85 @@ Les votes sont additionnés par agent. Si le gagnant a au moins 75 % du total
 sinon il choisit parmi tous les agents, et son choix l'emporte s'il est assez
 sûr (≥ 0,6). Sinon, l'email va au `GenericAgent`.
 
+## Sélection du contexte
+Un petit modèle local a une fenêtre de contexte limitée et se laisse distraire par les
+informations hors sujet. Chaque agent n'envoie donc au LLM que les croyances de base
+utiles à l'email (au plus `maxBeliefs`) et les `maxThreadMessages` derniers messages du
+fil (toujours transmis). La stratégie est un `ContextSelector` (patron Strategy) :
+
+| Stratégie | Classe | Principe |
+|-----------|--------|----------|
+| `all` | `AllContextSelector` | tout le contexte (comportement d'origine, référence pour les expériences) |
+| `lexical` (défaut) | `LexicalContextSelector` | score BM25 entre l'email et chaque croyance, sans dépendance ni appel au LLM ; termes normalisés par `Terms` (accents, mots vides FR/EN, troncature à 4 lettres) |
+| `embedding` | `EmbeddingContextSelector` | similarité cosinus d'embeddings locaux (`/v1/embeddings`), mis en cache par `CachingEmbedder` ; reconnaît les synonymes et le multilingue ; repli automatique sur `lexical` si le serveur ne répond pas |
+
+La stratégie par défaut vient de `config.json` ; un agent peut la remplacer dans son
+`agent.json` : `"context": {"strategy": "all", "maxBeliefs": 12, "maxThreadMessages": 4}`.
+L'étape *Context and memory* du workflow affiche ce qui a été retenu
+(ex. `3/10 context belief(s) selected (lexical), 2/2 message(s) ..., 431 chars`).
+Le CriticAgent relit le brouillon avec ce même contexte.
+
+## Journal des décisions
+`DecisionLogger` (observateur du `RoutingAgent`) ajoute une ligne JSON par email traité
+dans `logs/decisions.jsonl`. Chaque ligne contient :
+- les signaux, les votes par agent, le recours à l'arbitre et l'explication du choix ;
+- le contexte retenu (stratégie, nombre de croyances, taille) ;
+- chaque brouillon (durée, note et remarques du critique, décision de l'utilisateur, raison d'un refus) ;
+- l'issue finale et les durées.
+
+Les échecs (LLM injoignable...) sont journalisés avec l'étape fautive. Par confidentialité,
+le corps des emails, les brouillons et le contenu des croyances ne sont **pas** écrits
+(seulement leur taille) ; `"includeText": true` les ajoute pour le débogage.
+
+`Evaluation log` (ou `make eval-log`) résume ce journal : répartition par agent, taux
+d'acceptation au premier brouillon, nombre moyen de brouillons, **calibration du
+CriticAgent** (note moyenne des brouillons acceptés vs refusés) et raisons de refus.
+
+## Expériences
+`eval/dataset.json` contient 30 emails étiquetés avec l'agent attendu (`expected`), et
+pour les cas ambigus, les autres agents acceptables (`acceptable`). Catégories :
+`clear`, `unknown-sender`, `french`, `cross-context` (contact connu qui écrit sur un autre
+sujet que son rôle habituel), `ambiguous`. 14 emails sont marqués `"reply": true` pour
+l'évaluation des réponses. Lancer LM Studio, puis depuis la racine :
+
+    java -cp "bin;lib/*" Evaluation routing                 # make eval-routing
+    java -cp "bin;lib/*" Evaluation replies --limit 6       # make eval-replies ARGS="--limit 6"
+    java -cp "bin;lib/*" Evaluation log                     # make eval-log
+
+Options : `--configs a,b`, `--dataset fichier`, `--limit N`, `--judge-model MODELE`.
+Les rapports sont écrits dans `eval/results/` (Markdown pour le rapport, CSV/JSON pour l'analyse).
+
+**Routage** (`RoutingEvaluation`, routage seul via `RoutingAgent.classify`) :
+
+| Configuration | Contenu |
+|---|---|
+| `full` | tous les signaux + arbitre LLM en cas de doute (le système) |
+| `rules-only` | tous les signaux, sans LLM : les cas douteux vont au `GenericAgent` |
+| `llm-only` | aucun signal : le LLM classe chaque email (approche « un seul modèle ») |
+| `no-keywords` | signaux liés à l'expéditeur seulement + arbitre |
+| `content-only` | mots-clés seulement (expéditeur ignoré) + arbitre |
+
+Mesures :
+- exactitude stricte et souple, exactitude par catégorie ;
+- matrice de confusion, précision / rappel / F1 par agent ;
+- taux d'appel à l'arbitre et de repli, nombre d'appels au LLM, temps moyen ;
+- liste des erreurs avec l'explication du routeur.
+
+**Réponses** (`ReplyEvaluation`) : teste l'hypothèse du projet.
+
+| Configuration | Contenu |
+|---|---|
+| `multi-agent` | routage + agent spécialisé, contexte sélectionné |
+| `multi-agent-all-context` | idem, tout le contexte de l'agent (mesure l'effet de la sélection) |
+| `oracle-routing` | l'agent attendu répond directement (isole la rédaction des erreurs de routage) |
+| `single-agent` | référence : un seul prompt générique (`eval/single_agent_prompt.txt`) et le contexte de tous les agents, construit avec le même `BDIAgent` |
+
+Chaque brouillon est noté par un juge (prompt du CriticAgent) qui reçoit les règles et
+**tout** le contexte de l'agent attendu, quelle que soit la configuration. Mesures : note
+moyenne /10, taux d'approbation, taille du contexte et du prompt (`MeteredLLM`), temps de
+génération. Le juge étant lui-même un LLM local, il est conseillé d'utiliser un modèle
+différent (`--judge-model`) et de relire un échantillon des brouillons (`replies-*.json`).
+
 ## Agents
 | Agent | Rôle | Contexte |
 |-------|------|----------|
@@ -130,6 +221,15 @@ brouillons refusés ne sont jamais mémorisés.
       RoutingAgent.java             combine les signaux, choisit l'agent, gère la boucle de validation, publie les étapes
       RoutingStep.java, ThreadStep.java, ContactStep.java, KeywordStep.java, DomainStep.java
       Arbiter.java, LlmClassifierStep.java  arbitre (LLM) en cas de doute
+      RoutingOutcome.java           résultat complet du routage + explication
+      ContextSelector.java, AllContextSelector.java, LexicalContextSelector.java,
+      EmbeddingContextSelector.java, ContextSelectorFactory.java, ContextSelection.java, Terms.java
+                                    sélection du contexte envoyé au LLM
+      Embedder.java, LmStudioEmbedder.java, CachingEmbedder.java  embeddings locaux
+      DecisionLogger.java, DecisionLogReport.java  journal des décisions et statistiques
+      AppConfig.java                lecture de config.json
+      Evaluation.java, RoutingEvaluation.java, ReplyEvaluation.java, LabelledEmail.java,
+      MeteredLLM.java               expériences (routage, réponses, journal)
       RoutingDecision.java          agent choisi + confiance + raison
       WorkflowListener.java, WorkflowStage.java, StageStatus.java  observation des étapes (interface)
       Agent.java, BDIAgent.java     agents spécialisés
@@ -152,6 +252,10 @@ brouillons refusés ne sont jamais mémorisés.
     config.json                     adresse du serveur LLM, modèle, CriticAgent
     critic/attitude_critic.txt      system prompt du CriticAgent
     demo/emails.json                emails de démonstration
+    eval/dataset.json               jeu de test étiqueté (30 emails)
+    eval/single_agent_prompt.txt    prompt de l'agent unique de référence
+    eval/results/                   rapports d'expériences (générés, non versionnés)
+    logs/decisions.jsonl            journal des décisions (généré, non versionné)
     agents/
       <agent>/agent.json            configuration (nom, rôle, description, mots-clés, fichiers, maxRetries)
       <agent>/attitude_*.txt        system prompt
@@ -177,4 +281,5 @@ ajouter leurs adresses avec le même `role` dans `agents/contacts.json`.
 agents, routage des 5 emails de démonstration, arbitrage, fallback générique,
 acceptation / modification / nouveau brouillon / refus / abandon, mémoire du fil,
 CriticAgent, ordre des étapes du workflow, panne du LLM, création et modification
-d'agents. Ces tests ne remplacent pas un essai avec un vrai modèle dans LM Studio.
+d'agents, sélection du contexte (lexicale, embeddings simulés, repli, réglage par agent),
+journal des décisions et son rapport, banc d'expérimentation (toutes les configurations). Ces tests ne remplacent pas un essai avec un vrai modèle dans LM Studio.

@@ -1,36 +1,25 @@
 import java.io.File;
-import java.util.Map;
-import java.util.HashMap;
 import java.io.IOException;
 
+// Factory : construit un agent a partir de son dossier dans agents/ (agent.json + fichiers).
 public class AgentFactory{
     private final LLM llm;
+    private final ContextSelectorFactory selectors;
 
     public AgentFactory(LLM llm) {
+        this(llm, ContextSelectorFactory.defaults());
+    }
+
+    public AgentFactory(LLM llm, ContextSelectorFactory selectors) {
         this.llm = llm;
+        this.selectors = selectors;
     }
 
     public Agent create(File agentDir) throws IOException{
-        String configPath = new File(agentDir, "agent.json").getPath();
-        return new BDIAgent(configPath, llm);
+        return createFromConfig(new File(agentDir, "agent.json").getPath());
     }
 
-
-    public Map<String, Agent> createAllAgents() throws IOException{
-        File dir = new File("agents/");
-        Map<String, Agent> agents = new HashMap<>();
-
-        File[] files = dir.listFiles();
-
-        if (files == null) throw new IOException("Agents folder not found: " + dir.getAbsolutePath());
-
-        for (File file : files){
-            if (file.isDirectory()){
-                Agent agent = create(file);
-                agents.put(agent.getRole().toUpperCase(), agent);
-            }
-        }
-
-        return agents;
+    public Agent createFromConfig(String configPath) throws IOException{
+        return new BDIAgent(configPath, llm, selectors);
     }
 }
