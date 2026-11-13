@@ -1,0 +1,994 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage{lmodern}
+\usepackage[a4paper,margin=2.4cm]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{caption}
+\usepackage{float}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,fit,calc}
+\usepackage[hidelinks]{hyperref}
+
+\graphicspath{{images/}{./}}
+\setlist{itemsep=2pt,topsep=4pt}
+\setlength{\parskip}{5pt}
+\setlength{\parindent}{0pt}
+\setlength{\emergencystretch}{2em}
+\renewcommand{\arraystretch}{1.25}
+\newcolumntype{L}{>{\raggedright\arraybackslash}X}
+
+\newcommand{\code}[1]{\texttt{#1}}
+
+% Insere la capture si le fichier existe, sinon un cadre de remplacement
+\newcommand{\capture}[3]{%
+  \begin{figure}[H]
+    \centering
+    \IfFileExists{images/#1}{%
+      \includegraphics[width=\linewidth,height=0.4\textheight,keepaspectratio]{#1}%
+    }{%
+      \IfFileExists{#1}{%
+        \includegraphics[width=\linewidth,height=0.4\textheight,keepaspectratio]{#1}%
+      }{%
+        \fbox{\parbox[c][5.5cm][c]{0.92\linewidth}{\centering
+          \textit{Capture à insérer :} \code{#1}\\[4pt]
+          \small #2}}%
+      }%
+    }
+    \caption{#2}
+    \label{#3}
+  \end{figure}
+}
+
+\begin{document}
+
+% ------------------------------------------------------------------
+\begin{titlepage}
+  \centering
+  \vspace*{2cm}
+  {\large Université Côte d'Azur\par}
+  {\large Master 2 Intelligence Artificielle\par}
+  \vspace{2.5cm}
+  {\large Projet : Multi-Agent Systems\par}
+  \vspace{0.8cm}
+  {\LARGE\bfseries Conception d'un système multi-agent\\[4pt]
+   pour la réponse automatique aux emails\\[4pt]
+   à l'aide de LLM locaux\par}
+  \vspace{2.5cm}
+  {\large Mounia AREZZOUG --- 22509499\par}
+  \vspace{0.3cm}
+  {\large Yunus Emre DOGAN --- 22508757\par}
+  \vspace{0.3cm}
+  {\large Mathis LEVESQUE DU ROSTU --- 22510354\par}
+  \vfill
+  {Année universitaire 2026--2027\par}
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+% ------------------------------------------------------------------
+\section{Introduction et problématique}
+
+Un enseignant-chercheur reçoit des emails très différents : questions d'étudiants,
+messages de collègues, demandes de l'administration, échanges autour d'un projet de
+recherche. Une bonne réponse dépend de l'expéditeur, du sujet, de l'historique de la
+conversation et d'informations propres à chaque contexte.
+
+Les grands modèles de langage savent rédiger ce type de réponse, mais les services en
+ligne posent un problème de confidentialité : ces emails contiennent des données
+personnelles ou non publiées. Le sujet impose donc d'utiliser un LLM exécuté
+\emph{localement}. Ces modèles sont plus petits et moins fiables que les modèles distants.
+
+La question posée par le sujet est la suivante : \emph{une organisation d'agents
+spécialisés permet-elle d'utiliser efficacement des LLM locaux de taille raisonnable pour
+produire des réponses adaptées à différents contextes ?}
+
+Notre réponse est un programme Java qui ne fait pas « tout passer » dans un seul modèle :
+un agent de routage choisit l'agent spécialisé le plus adapté. Cet agent rédige un
+brouillon avec son propre contexte et un agent critique le relit. L'utilisateur garde
+toujours la décision finale. Aucun email n'est envoyé automatiquement.
+
+% ------------------------------------------------------------------
+\section{Notions de systèmes multi-agents mobilisées}
+
+\paragraph{Qu'est-ce qu'un agent ?}
+Un agent est une entité \emph{autonome} qui perçoit son environnement, possède ses propres
+connaissances et agit pour atteindre un objectif. Dans notre projet, un agent spécialisé
+reçoit un email (sa perception). Il dispose d'un rôle, d'un \emph{system prompt}, d'un
+contexte qui lui est propre et d'une mémoire des conversations, et il agit en proposant
+une réponse. Deux agents différents ne savent pas les mêmes choses : l'agent
+administratif ne voit pas les fichiers du projet de recherche.
+
+\paragraph{Le modèle BDI.}
+Nos agents suivent le modèle \emph{Belief--Desire--Intention} :
+\begin{itemize}
+  \item \textbf{Croyances} : les faits du contexte (\code{date | fait}) et les échanges validés des fils déjà traités ;
+  \item \textbf{Désir} : obtenir une réponse validée par l'utilisateur en un nombre limité d'essais (\code{maxRetries}) ;
+  \item \textbf{Intention} : l'engagement concret à répondre à \emph{cet} email, avec ses brouillons, les refus et leurs raisons ;
+  \item \textbf{Plan} : rédiger, soumettre, puis mémoriser la réponse, recommencer avec les remarques ou abandonner.
+\end{itemize}
+
+\paragraph{Pourquoi plusieurs agents plutôt qu'un seul programme ?}
+Avec un seul agent, il faudrait envoyer au modèle toutes les règles et toutes les
+informations de tous les contextes. C'est long, coûteux et source d'erreurs pour un petit
+modèle. En spécialisant les agents, chaque appel au LLM reçoit un prompt court et ciblé.
+Les contextes sont isolés les uns des autres, ce qui limite aussi les fuites
+d'informations. Enfin, l'organisation est extensible : ajouter un domaine revient à
+ajouter un agent.
+
+\paragraph{Organisation et coordination.}
+Notre organisation est hiérarchique et simple. Un agent coordinateur (le
+\code{RoutingAgent}) reçoit les emails, choisit l'agent compétent et sert
+d'intermédiaire entre cet agent, l'agent critique et l'utilisateur. Les agents
+spécialisés ne communiquent jamais directement entre eux : toute interaction passe par le
+coordinateur, qui joue le rôle de \emph{médiateur} (y compris quand plusieurs agents
+collaborent sur un email, section~\ref{sec:collab}). La communication se fait par
+échange d'objets-messages explicites (email, intention, proposition, retour de
+l'utilisateur, critique).
+
+% ------------------------------------------------------------------
+\section{Architecture du système}
+
+\subsection{Vue d'ensemble}
+
+La figure~\ref{fig:archi} présente l'organisation des agents. Le code est écrit en Java
+17, sans framework multi-agent externe. La seule bibliothèque utilisée est Jackson, pour
+le JSON.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+  font=\small,
+  box/.style={draw, rounded corners=2pt, minimum height=8mm, align=center, inner sep=3pt},
+  agent/.style={box, minimum width=35mm, minimum height=6.5mm},
+  arr/.style={-{Stealth[length=2.2mm]}, thick},
+  darr/.style={-{Stealth[length=2.2mm]}, thick, dashed}
+]
+\node[box, minimum width=24mm] (user) at (0,0.2) {Utilisateur\\(interface Swing)};
+\node[box, minimum width=25mm, line width=1pt] (router) at (4.0,0.2) {RoutingAgent\\(coordinateur)};
+\node[agent] (s) at (9.1,2.0) {StudentAgent};
+\node[agent] (t) at (9.1,1.1) {TeacherAgent};
+\node[agent] (a) at (9.1,0.2) {AdministrationAgent};
+\node[agent] (r) at (9.1,-0.7) {ResearchProjectAgent};
+\node[agent] (g) at (9.1,-1.6) {GenericAgent};
+\node[draw, dashed, rounded corners, fit=(s)(g), inner sep=4pt, label=above:{Agents spécialisés (BDI)}] (spec) {};
+\node[box, minimum width=23mm] (llm) at (13.4,0.2) {LLM local\\(serveur\\compatible\\OpenAI)};
+\node[box, minimum width=33mm] (signals) at (4.0,-2.0) {Signaux de routage\\{\footnotesize Thread, Contact, Keyword, Domain}};
+\node[box, minimum width=33mm] (arbiter) at (4.0,-3.6) {Arbitre LLM\\(LlmClassifierStep)};
+\node[agent, minimum height=8mm] (critic) at (9.1,-3.6) {CriticAgent};
+
+\draw[arr] (user) -- node[above]{email} (router);
+\draw[arr] (router.north) to[bend right=30] node[above]{proposition} (user.north);
+\draw[arr] (router) -- node[above, pos=0.4]{intention} (spec.west |- router);
+\draw[arr] (router) -- (signals);
+\draw[darr] (signals) -- node[right]{\footnotesize si doute} (arbiter);
+\draw[arr] (6.55,0.2) -- node[right, pos=0.72]{\footnotesize brouillon} (6.55,-3.6) -- (critic.west);
+\draw[arr] (spec.east |- llm) -- (llm);
+\draw[arr] (critic.east) -| (llm.south);
+\draw[arr] (arbiter.south) -- ++(0,-0.45) -| ($(llm.south)+(0.6,0)$);
+\end{tikzpicture}
+\caption{Organisation des agents. Toutes les interactions passent par le RoutingAgent, qui peut solliciter plusieurs agents spécialisés sur un email ambigu (section~\ref{sec:collab}).}
+\label{fig:archi}
+\end{figure}
+
+\subsection{Les agents et leurs responsabilités}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\linewidth}{l L l}
+\toprule
+\textbf{Agent} & \textbf{Responsabilité} & \textbf{Contexte propre} \\
+\midrule
+RoutingAgent & Choisit l'agent compétent (et, si l'email est ambigu, des agents contributeurs), transmet l'email, gère la boucle de validation. & contacts, mots-clés \\
+StudentAgent & Répond aux étudiants : cours, TP, rendus, examens. & 10 faits \\
+TeacherAgent & Répond aux collègues : réunions, jurys, enseignement. & 10 faits \\
+AdministrationAgent & Répond à l'administration : documents, signatures, échéances, rendez-vous (ton formel). & 10 faits \\
+ResearchProjectAgent & Gère le projet de recherche \emph{SuperMASProject} : membres, livrables, deadlines. & 2 fichiers, 14 faits \\
+GenericAgent & Agent par défaut quand aucun autre ne convient. & 2 faits \\
+CriticAgent & Évalue chaque brouillon (note, remarques). N'est jamais choisi par le routeur. & celui de l'agent relu \\
+\bottomrule
+\end{tabularx}
+\caption{Agents présents dans le système.}
+\end{table}
+
+Chaque agent spécialisé est défini par un dossier \code{agents/<nom>/} contenant un fichier
+\code{agent.json} (nom, rôle, description, mots-clés, \code{maxRetries}), un
+\emph{system prompt} et un ou plusieurs fichiers de contexte. La classe \code{AgentFactory}
+crée automatiquement un \code{BDIAgent} pour chaque dossier. Ajouter un agent ne demande
+donc aucune modification du code Java. L'\code{AdministrationAgent} et le
+\code{ResearchProjectAgent} ont d'ailleurs été ajoutés de cette façon.
+
+Le \emph{system prompt} définit le rôle, le ton, ce que l'agent doit faire et ce qu'il ne
+doit jamais faire. Par exemple, le \code{ResearchProjectAgent} doit toujours rappeler la
+prochaine échéance, ne jamais s'engager sur une nouvelle tâche sans validation et ne
+jamais partager de résultats non publiés avec une personne extérieure au projet.
+
+\subsection{Principales classes et design patterns}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\linewidth}{l l L}
+\toprule
+\textbf{Pattern} & \textbf{Où} & \textbf{Pourquoi} \\
+\midrule
+Factory & \code{AgentFactory} & Créer un agent à partir de sa configuration, sans code spécifique. \\
+Strategy & \code{RoutingStep}, \code{Arbiter} & Chaque signal de routage est interchangeable ; en ajouter un revient à écrire une classe. \\
+Adapter & \code{LmStudioClient} & Adapte l'API HTTP du serveur local à une seule méthode \code{ask(prompt, message)}. \\
+Mediator & \code{RoutingAgent} & Les agents, le critique et l'utilisateur ne se connaissent pas entre eux. \\
+Observer & \code{WorkflowListener} & Le routeur publie ses étapes ; l'interface les affiche sans que le routeur la connaisse. \\
+Facade & \code{EmailAssistant} & Construit et cache l'assemblage du système pour l'interface et les tests. \\
+Repository & \code{AgentRegistry} & Lit et modifie les fichiers des agents depuis l'interface. \\
+Strategy & \code{ContextSelector} & Choisir comment sélectionner le contexte (tout, BM25, embeddings). \\
+Factory & \code{ContextSelectorFactory} & Créer la stratégie demandée par la configuration. \\
+Decorator & \code{CachingEmbedder}, \code{MeteredLLM} & Ajouter un cache ou des mesures sans modifier le client. \\
+Observer & \code{DecisionLogger} & Journaliser sans que le routeur connaisse le journal. \\
+\bottomrule
+\end{tabularx}
+\caption{Design patterns réellement utilisés.}
+\end{table}
+
+L'interface \code{Validator} sépare la validation humaine du reste du système : la version
+terminale (\code{ConsoleValidator}) et l'interface graphique (\code{SwingValidator})
+l'implémentent sans changer la boucle du routeur.
+
+% ------------------------------------------------------------------
+\section{Organisation, communication et coordination}
+
+\subsection{Le routage}
+
+Le \code{RoutingAgent} ne s'arrête pas au premier indice. Quatre signaux indépendants
+votent chacun pour un agent avec une confiance entre 0 et 1, et les votes sont
+additionnés par agent.
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\linewidth}{l l L}
+\toprule
+\textbf{Signal} & \textbf{Vote} & \textbf{Condition} \\
+\midrule
+Fil (\code{ThreadStep}) & 0,9 & Un agent a déjà traité ce fil de discussion. \\
+Contact (\code{ContactStep}) & 1,0 & L'expéditeur est connu dans \code{contacts.json}. \\
+Mots-clés (\code{KeywordStep}) & 0,5 à 0,75 & L'agent qui a le plus de mots-clés dans le sujet et le corps (aucun vote en cas d'égalité). \\
+Domaine (\code{DomainStep}) & 0,6 & Expéditeur inconnu : domaine étudiant, domaine universitaire ou boîte administrative (\code{scolarite@}, \code{rh@}...). \\
+\bottomrule
+\end{tabularx}
+\caption{Signaux de routage.}
+\end{table}
+
+Un agent est choisi directement si son score représente au moins 75\,\% du total
+\emph{et} vaut au moins 0,7. Un contact ou un fil connu suffisent donc seuls, alors que
+des mots-clés ou un domaine doivent se confirmer mutuellement.
+
+\paragraph{Plusieurs agents conviennent.} Si les votes sont partagés, le routeur consulte
+le LLM comme arbitre (\code{LlmClassifierStep}). Il lui donne seulement les agents en
+conflit et leurs descriptions, et le modèle répond en JSON avec un rôle et une confiance.
+Il peut aussi désigner des agents contributeurs pour une partie distincte de l'email
+(section~\ref{sec:collab}).
+
+\paragraph{Aucun agent ne convient.} Si les signaux sont faibles, l'arbitre choisit parmi
+tous les agents. Son choix n'est retenu que si sa confiance atteint 0,6 ; sinon,
+l'email est confié au \code{GenericAgent}. La raison de la décision (liste des votes,
+conflit, arbitrage) est conservée et affichée.
+
+\subsection{Contexte et mémoire des conversations}
+
+Seuls le contexte de l'agent choisi et l'historique du fil courant sont utilisés.
+Parmi eux, seuls les faits les plus pertinents pour l'email et les derniers messages du
+fil sont envoyés au modèle (section~\ref{sec:contexte}). Cela évite de surcharger un
+petit LLM avec des informations inutiles.
+
+Quand l'utilisateur valide une réponse, l'agent mémorise deux croyances : l'email reçu et
+la réponse réellement retenue, éventuellement corrigée par l'utilisateur. Elles sont
+sauvegardées dans \code{learnt\_beliefs\_<agent>.txt} et rechargées au démarrage. Les
+brouillons refusés ne sont jamais mémorisés. Cette mémoire sert deux fois : le
+\code{ThreadStep} renvoie une relance au même agent, et cet agent reçoit les derniers
+messages du fil pour rédiger.
+
+\subsection{Agent critique et validation humaine}
+
+Avant d'être montré à l'utilisateur, chaque brouillon est relu par le \code{CriticAgent}.
+Celui-ci reçoit les règles et le contexte de l'agent auteur, l'email et le brouillon. Il
+renvoie une note sur 10 et des remarques : réponse incomplète, fait inventé, règle non
+respectée. Un brouillon n'est considéré comme approuvé qu'à partir de 7/10. Le critique
+conseille sans bloquer : s'il échoue, le traitement continue. Il peut aussi être désactivé.
+
+L'utilisateur garde toujours la décision :
+\begin{itemize}
+  \item \textbf{accepter} la réponse, ou la \textbf{modifier} puis la valider ;
+  \item \textbf{demander un nouveau brouillon} avec des remarques (éventuellement celles du critique) ;
+  \item \textbf{refuser} définitivement : rien n'est mémorisé.
+\end{itemize}
+Après \code{maxRetries} refus, l'intention est abandonnée et l'utilisateur peut écrire la
+réponse lui-même.
+
+% ------------------------------------------------------------------
+\section{Déroulement d'un scénario complet}
+
+Prenons l'email d'un étudiant connu (Luca Martin) qui demande quels chapitres tombent à
+l'examen. La figure~\ref{fig:sequence} résume les échanges.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+  font=\small,
+  etape/.style={draw, rounded corners=2pt, minimum width=10.5cm, minimum height=7mm, align=left, inner sep=4pt},
+  arr/.style={-{Stealth[length=2mm]}, thick}
+]
+\node[etape] (e1) {1. L'utilisateur saisit l'email et lance le traitement.};
+\node[etape, below=0.3cm of e1] (e2) {2. Le RoutingAgent collecte les votes : contact connu (1,0) + mot-clé « exam » (0,5).};
+\node[etape, below=0.3cm of e2] (e3) {3. Votes concordants : StudentAgent choisi sans appel à l'arbitre.};
+\node[etape, below=0.3cm of e3] (e4) {4. StudentAgent adopte une intention et récupère contexte + mémoire du fil.};
+\node[etape, below=0.3cm of e4] (e5) {5. Il envoie au LLM local son prompt, son contexte et l'email : brouillon 1.};
+\node[etape, below=0.3cm of e5] (e6) {6. Le CriticAgent note le brouillon et propose des remarques.};
+\node[etape, below=0.3cm of e6] (e7) {7. Le RoutingAgent présente la proposition à l'utilisateur.};
+\node[etape, below=0.3cm of e7] (e8) {8. Accepter / modifier : réponse mémorisée.\quad Remarques : retour à l'étape 5.};
+\foreach \a/\b in {e1/e2,e2/e3,e3/e4,e4/e5,e5/e6,e6/e7,e7/e8} \draw[arr] (\a) -- (\b);
+\draw[arr] (e8.east) -- ++(0.6,0) |- node[right, pos=0.25, align=left]{\footnotesize nouveau\\ \footnotesize brouillon} (e5.east);
+\end{tikzpicture}
+\caption{Traitement d'un email, de la réception à la réponse validée.}
+\label{fig:sequence}
+\end{figure}
+
+Si l'étudiant relance ensuite dans le même fil, le \code{ThreadStep} reconnaît la
+conversation, et le \code{StudentAgent} reçoit l'échange précédent dans son prompt.
+
+Pour un email ambigu, par exemple une personne inconnue qui demande un formulaire
+d'inscription pour un workshop du projet, les votes divergent : mots-clés administratifs
+d'un côté, domaine universitaire de l'autre. Le routeur consulte alors l'arbitre LLM. Si
+l'email contient aussi une demande relevant du projet de recherche, le
+\code{ResearchProjectAgent} peut contribuer à la réponse rédigée par l'agent principal
+(section~\ref{sec:collab}).
+
+% ------------------------------------------------------------------
+\section{Intégration du LLM local}
+
+L'application communique avec un serveur local compatible avec l'API OpenAI
+(\code{POST /v1/chat/completions}). Elle est prévue pour LM Studio sur le port 1234.
+L'adresse et le nom du modèle sont lus dans \code{config.json}, ce qui permet de changer
+de modèle sans recompiler :
+
+\begin{center}
+\small
+\code{"url": "http://127.0.0.1:1234/v1/chat/completions",}\\
+\code{"model": "google/gemma-4-e4b"}
+\end{center}
+
+Le reste du code ne dépend que de l'interface \code{LLM} et de sa méthode
+\code{ask(systemPrompt, message)}. \code{LmStudioClient} construit la requête JSON
+(un message système et un message utilisateur) et lit la réponse. En cas de problème
+(serveur arrêté, modèle absent), il lève une \code{LlmException} explicite : une erreur ne
+peut jamais être prise pour une réponse. Trois types d'appels sont faits au modèle :
+la rédaction (agent spécialisé), l'arbitrage (classifieur) et la relecture (critique).
+Si un modèle d'embeddings est configuré, une autre route est aussi utilisée,
+\code{POST /v1/embeddings}, pour la sélection du contexte (section~\ref{sec:contexte}).
+Les réponses JSON sont lues de façon tolérante, car les petits modèles ajoutent souvent du
+texte autour.
+
+Comme le code ne dépend que du protocole, nous avons pu utiliser aussi le serveur de
+\emph{llama.cpp} (\code{llama-server}) sans modifier une ligne de Java
+(section~\ref{sec:tests}). LM Studio ne fonctionne pas sur les Mac à processeur Intel.
+
+% ------------------------------------------------------------------
+\section{Sélection du contexte et journal des décisions}
+\label{sec:extensions}
+
+La première version du rapport proposait trois pistes : ne récupérer que les faits utiles
+pour l'email (RAG), journaliser les décisions et comparer, sur un jeu de test, une
+architecture mono-agent et l'architecture multi-agent. Ces trois pistes ont été
+réalisées. Le but est de mesurer la question posée par le sujet au lieu de seulement
+l'argumenter. Cette section décrit les deux premières ; la comparaison est présentée
+dans la section~\ref{sec:tests}.
+
+\subsection{Sélection du contexte envoyé au LLM}
+\label{sec:contexte}
+
+\paragraph{Problème.} L'agent choisi envoyait au modèle \emph{tous} ses faits de contexte
+et \emph{tout} l'historique du fil. Les prompts grossissent avec le contexte, ce qui gêne
+un petit modèle.
+
+\paragraph{Solution.} Une étape de sélection a été ajoutée : chaque agent ne transmet que
+les croyances les plus pertinentes pour l'email traité. Trois stratégies sont
+interchangeables grâce au pattern \emph{Strategy} (interface \code{ContextSelector}).
+Elles sont créées par une \emph{Factory} (\code{ContextSelectorFactory}).
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\linewidth}{l L}
+\toprule
+\textbf{Stratégie} & \textbf{Fonctionnement} \\
+\midrule
+\code{all} & Comportement d'origine : tout le contexte est envoyé. \\
+\addlinespace
+\code{lexical} (par défaut) & Score BM25 entre l'email et chaque fait ($k_1 = 1{,}2$ et
+$b = 0{,}75$). Les textes sont d'abord normalisés : accents retirés, mots vides français
+et anglais supprimés, mots réduits à une racine de 4 lettres pour rapprocher les formes
+françaises et anglaises. Seuls les $k$ meilleurs faits de score non nul sont gardés,
+dans leur ordre d'origine. \\
+\addlinespace
+\code{embedding} & Similarité cosinus entre l'email et chaque fait, sur des vecteurs
+calculés par le serveur local (route \code{/v1/embeddings} de LM Studio, modèle
+\emph{nomic-embed-text-v1.5}). Un décorateur (\code{CachingEmbedder}) garde les vecteurs
+en mémoire pour ne pas recalculer les faits à chaque email. Si le service d'embeddings ne
+répond pas, l'agent revient automatiquement à la stratégie lexicale, et ce repli est
+affiché. \\
+\bottomrule
+\end{tabularx}
+\caption{Stratégies de sélection du contexte.}
+\end{table}
+
+\paragraph{Configuration.}
+\begin{itemize}
+  \item Dans \code{config.json}, un bloc \code{context} règle la stratégie,
+        \code{maxBeliefs} (8 par défaut) et \code{maxThreadMessages} (6 par défaut, ce
+        sont les derniers messages du fil qui sont gardés).
+  \item Un bloc \code{embedding} donne le nom du modèle d'embeddings. S'il est vide, la
+        stratégie \code{embedding} est remplacée par \code{lexical}, avec un avertissement.
+  \item Chaque agent peut redéfinir ces valeurs dans son \code{agent.json}.
+\end{itemize}
+
+\paragraph{Visibilité.} L'étape « contexte » de l'interface affiche maintenant ce qui a
+été retenu. Exemple : « 3/10 context belief(s) selected (lexical), 2/2 message(s) from
+this thread's memory, 450 chars ».
+
+\paragraph{CriticAgent.} Le critique reçoit le même contexte sélectionné que l'agent
+auteur, ce qui garde sa relecture cohérente avec ce que l'auteur a vu.
+
+\paragraph{Défaut corrigé.} Pour un email sans fil connu, le contexte de base d'un agent
+était ajouté deux fois au prompt (méthode \code{BeliefBase.get}). Le défaut est corrigé et
+un test vérifie maintenant que chaque fait n'apparaît qu'une fois.
+
+\subsection{Journal des décisions et explicabilité}
+\label{sec:journal}
+
+\paragraph{Principe.} Un observateur, \code{DecisionLogger}, est branché sur l'interface
+\code{WorkflowListener} existante (pattern \emph{Observer}). Le routeur n'a donc pas besoin
+de le connaître. Pour chaque email traité, il écrit une ligne JSON dans
+\code{logs/decisions.jsonl}.
+
+\paragraph{Contenu d'une ligne.}
+\begin{itemize}
+  \item \textbf{Routage} : agent choisi, rôle, confiance, score de chaque agent, signaux
+        qui ont voté, arbitre consulté ou non, repli sur le \code{GenericAgent} ou non,
+        explication lisible et durée.
+  \item \textbf{Contexte} : stratégie, nombre de faits retenus sur le nombre disponible,
+        nombre de messages du fil envoyés, taille en caractères.
+  \item \textbf{Chaque brouillon} : numéro d'essai, temps de génération, taille, note et
+        remarques du critique, retour de l'utilisateur et raison d'un éventuel refus.
+  \item \textbf{Issue finale} (acceptée, modifiée, refusée, abandonnée) et nombre de
+        brouillons.
+  \item \textbf{En cas d'erreur} : l'étape qui a échoué et le message.
+\end{itemize}
+
+\paragraph{Confidentialité.} Par défaut, le texte des emails, des brouillons et des faits
+n'est pas enregistré, seulement des métadonnées. L'option \code{includeText} de
+\code{config.json} permet de l'activer. Le journal peut aussi être désactivé.
+
+\paragraph{Rapport.} La commande \code{Evaluation log} relit le journal et produit un
+rapport Markdown :
+\begin{itemize}
+  \item statistiques par agent ;
+  \item taux d'arbitrage et de repli ;
+  \item nombre moyen de brouillons ;
+  \item calibration du critique, c'est-à-dire sa note moyenne selon la décision finale de
+        l'utilisateur, pour vérifier que le critique et l'utilisateur sont d'accord ;
+  \item raisons de refus les plus fréquentes.
+\end{itemize}
+
+\subsection{Nouvelles classes}
+
+\begingroup\raggedright
+\begin{itemize}
+  \item \textbf{Sélection du contexte} : \code{ContextSelector}, \code{AllContextSelector},
+        \code{LexicalContextSelector}, \code{EmbeddingContextSelector},
+        \code{ContextSelectorFactory}, \code{ContextSelection}, \code{Terms}
+        (normalisation du texte), \code{Embedder}, \code{LmStudioEmbedder},
+        \code{CachingEmbedder}.
+  \item \textbf{Journal} : \code{DecisionLogger}, \code{DecisionLogReport},
+        \code{RoutingOutcome} (décision de routage avec scores, signaux et explication).
+  \item \textbf{Évaluation} : \code{Evaluation} (point d'entrée), \code{RoutingEvaluation},
+        \code{ReplyEvaluation}, \code{LabelledEmail}, \code{MeteredLLM}.
+  \item \textbf{Configuration} : \code{AppConfig}, qui lit \code{config.json} et assemble
+        le système.
+  \item \textbf{Données} : \code{eval/dataset.json}, \code{eval/single\_agent\_prompt.txt}
+        (prompt de l'agent unique), \code{eval/RESULTATS.md} (résumé des résultats).
+\end{itemize}
+\par\endgroup
+
+% ------------------------------------------------------------------
+\section{Collaboration entre agents sur un email ambigu}
+\label{sec:collab}
+
+\paragraph{Problème.} Jusqu'ici, un email qui concerne plusieurs agents (par exemple une
+demande de formulaire d'inscription à un workshop, qui relève de l'administration
+\emph{et} du projet de recherche) était confié à un seul agent, qui ignorait l'autre
+partie de la demande. Le routeur peut maintenant faire répondre plusieurs agents, chacun
+sur sa partie, puis fusionner leurs contributions.
+
+\paragraph{Principe.}
+\begin{enumerate}
+  \item \textbf{Détection (règles).} Un agent est \emph{concerné} s'il a voté ou si l'un de
+        ses mots-clés apparaît dans l'email. La collaboration n'est envisagée que si au
+        moins deux agents sont concernés et que les signaux ne suffisent pas (arbitre
+        consulté) : un email clair ne coûte aucun appel supplémentaire.
+  \item \textbf{Répartition (LLM).} L'arbitre choisit l'agent \emph{principal} et, seulement
+        si l'email contient une demande distincte, des \emph{contributeurs} avec la partie
+        qui revient à chacun. Le \code{RoutingAgent} filtre cette proposition : agents
+        concernés uniquement, différents de l'agent principal et du \code{GenericAgent},
+        partie décrite, sans doublon, dans la limite \code{maxAgents}.
+  \item \textbf{Contributions.} Nouvelle étape « Collaboration » du workflow : chaque
+        contributeur rédige une courte note factuelle sur sa partie, avec \emph{ses} règles
+        et \emph{son} contexte (\code{Agent.contribute}, objet \code{Contribution}).
+  \item \textbf{Fusion.} L'agent principal rédige une réponse unique, avec son ton, en
+        intégrant les notes. Le \code{CriticAgent} les reçoit aussi, pour ne pas compter
+        comme inventée une information venue d'un contributeur.
+  \item \textbf{Validation.} Inchangée. Après un refus, seul l'agent principal rédige de
+        nouveau et les contributions sont réutilisées. Seul l'agent principal mémorise le
+        fil.
+\end{enumerate}
+
+Les agents spécialisés ne communiquent toujours pas entre eux : les notes passent par le
+\code{RoutingAgent} (médiateur) et l'\code{Intention} de l'agent principal. Un contributeur
+en panne n'arrête pas le traitement : l'étape est marquée en échec et l'agent principal
+répond seul. Si le modèle ne propose aucun contributeur, le comportement est celui d'avant.
+
+\paragraph{Configuration.} Dans \code{config.json} :
+\code{"collaboration": \{"enabled": true, "maxAgents": 2\}}. \code{maxAgents} compte
+l'agent principal (2 = un contributeur au plus) ; \code{enabled: false} désactive le
+mécanisme.
+
+\paragraph{Visibilité.}
+\begin{itemize}
+  \item Interface : onzième étape « Collaboration » dans le suivi du workflow ; décision de
+        routage avec agent principal et contributeurs (graphe des interactions et pastilles) ;
+        bandeau « Brouillon rédigé par X avec la contribution de Y (partie) » et bouton
+        \emph{Contributions} pour lire chaque note.
+  \item Journal des décisions : contributeurs, partie, taille, durée et erreur éventuelle ;
+        le rapport indique le taux de collaboration.
+\end{itemize}
+
+\paragraph{Évaluation.} Deux configurations de comparaison ont été ajoutées au banc :
+\code{no-collaboration} pour le routage (taux de collaboration, part des collaborations
+pertinentes, couverture des emails ambigus) et \code{multi-agent-no-collab} pour la
+qualité des réponses, à comparer à \code{multi-agent} sur les emails ambigus. Pour ces
+emails, le juge connaît aussi le contexte des autres agents acceptables. L'email de
+démonstration~5 illustre le cas : \code{AdministrationAgent} rédige avec la contribution
+de \code{ResearchProjectAgent}.
+
+\paragraph{Tests et limites.} Une nouvelle section de tests (21 vérifications, avec LLM
+simulé) couvre la répartition, le filtrage, la fusion, la critique, le nouveau brouillon,
+la mémoire, la panne d'un contributeur, la désactivation et le journal ; la suite passe
+de 78 à 99 vérifications. Ces tests valident la logique, pas la qualité des réponses : la
+collaboration n'a pas encore été mesurée avec un vrai modèle, et un petit modèle peut ne
+pas remplir la liste des contributeurs (l'agent principal répond alors seul).
+
+\paragraph{Nouvelles classes et modifications.}
+\begingroup\raggedright
+\begin{itemize}
+  \item \textbf{Nouvelle classe} : \code{Contribution}.
+  \item \textbf{Routage} : \code{RoutingDecision} (contributeurs), \code{Arbiter} et
+        \code{LlmClassifierStep} (désignation des contributeurs), \code{RoutingStep} et
+        \code{KeywordStep} (agents concernés), \code{RoutingAgent} (filtrage, étape de
+        collaboration).
+  \item \textbf{Agents} : \code{Agent}, \code{BDIAgent} (\code{contribute}, fusion dans le
+        brouillon), \code{Intention}, \code{Proposal}, \code{CriticAgent}.
+  \item \textbf{Workflow et interface} : \code{WorkflowStage}, \code{WorkflowListener},
+        \code{WorkflowPanel}, \code{RoutingPanel}, \code{ProposalPanel},
+        \code{AgentNetworkView}, \code{ProcessPage}, \code{DashboardPage},
+        \code{ConsoleValidator}.
+  \item \textbf{Journal, évaluation et configuration} : \code{DecisionLogger},
+        \code{DecisionLogReport}, \code{RoutingOutcome}, \code{RoutingEvaluation},
+        \code{ReplyEvaluation}, \code{AppConfig}, \code{config.json}.
+\end{itemize}
+\par\endgroup
+
+% ------------------------------------------------------------------
+\section{Interface graphique}
+
+L'interface est développée en Swing et comporte quatre pages. Le traitement d'un email
+tourne dans un thread séparé, pour que la fenêtre ne se fige pas pendant les appels au
+modèle. Quand le routeur attend la décision de l'utilisateur, \code{SwingValidator}
+bloque ce thread jusqu'au clic sur un bouton.
+
+\begin{itemize}
+  \item \textbf{Dashboard} : agents chargés, état du LLM, statistiques et activité de la session.
+  \item \textbf{Process email} : saisie ou chargement d'un email de démonstration, suivi des
+        onze étapes du traitement (\emph{Pending}, \emph{Processing}, \emph{Completed},
+        \emph{Failed}, \emph{Skipped}), décision de routage expliquée (agent principal et
+        contributeurs) et proposition à valider (bouton \emph{Contributions}).
+  \item \textbf{Agents} : consultation et modification de la description, des mots-clés, du
+        \emph{system prompt} et du contexte de chaque agent, consultation de la mémoire et
+        création d'un nouvel agent. Les modifications sont enregistrées dans les fichiers
+        et prises en compte immédiatement.
+  \item \textbf{Local LLM} : adresse du serveur, modèle configuré, état de la connexion,
+        prompt de test et activation du CriticAgent.
+\end{itemize}
+
+\capture{dashboard.png}{Tableau de bord : agents disponibles, état du LLM local et activité.}{fig:dashboard}
+\capture{routing.png}{Décision de routage : agent choisi, confiance, signaux et agents impliqués.}{fig:routing}
+\capture{workflow.png}{Suivi en direct des étapes du traitement d'un email.}{fig:workflow}
+\capture{proposal.png}{Proposition générée, avis du CriticAgent et boutons de validation.}{fig:proposal}
+\capture{agents.png}{Gestion des agents : modification du \emph{system prompt} et du contexte.}{fig:agents}
+
+% ------------------------------------------------------------------
+\section{Tests et expérimentations}
+\label{sec:tests}
+
+Nous avons préparé six emails de démonstration (\code{demo/emails.json}) qui couvrent les
+cas demandés par le sujet. Trois types de vérifications ont été faites, que nous
+distinguons clairement. Un banc d'expériences plus large, sur 30 emails étiquetés, est
+présenté à la fin de cette section (section~\ref{sec:banc}).
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\linewidth}{l L l}
+\toprule
+\textbf{Email} & \textbf{Signaux attendus} & \textbf{Agent} \\
+\midrule
+1. Étudiant (examen) & contact + mot-clé & StudentAgent \\
+2. Collègue (réunion de jury) & contact + mots-clés & TeacherAgent \\
+3. Scolarité (documents, échéance) & contact + mots-clés & AdministrationAgent \\
+4. Coordinatrice SuperMASProject & contact + mots-clés & ResearchProjectAgent \\
+5. Email ambigu (workshop) & conflit Administration / Teacher, arbitre LLM & selon l'arbitre \\
+6. Relance de l'email 1 & fil déjà traité & StudentAgent \\
+\bottomrule
+\end{tabularx}
+\caption{Emails de démonstration.}
+\end{table}
+
+\paragraph{1. Tests automatisés (sans vrai modèle).}
+La commande \code{make test} lance 99 vérifications avec un LLM simulé et un utilisateur
+simulé : routage des cinq premiers emails, arbitrage, repli sur le \code{GenericAgent},
+acceptation, modification, nouveau brouillon, refus, abandon, mémoire du fil,
+CriticAgent, ordre des étapes, panne du LLM, création et modification d'un agent.
+De nouveaux scénarios couvrent la sélection du contexte, le journal des décisions, le
+rapport du journal, le banc d'expériences, la correction du contexte dupliqué et la
+collaboration entre agents : la suite est passée de 41 à 99 vérifications. Les 99
+vérifications passent. Ces tests valident la logique multi-agent, pas la qualité
+des réponses.
+
+\paragraph{2. Tests avec un serveur simulé.}
+L'interface a été parcourue de bout en bout avec un petit serveur local qui implémente
+les mêmes routes HTTP que LM Studio mais renvoie des textes fixes. Les six emails ont été
+routés vers les agents attendus, et l'email 5 a bien déclenché l'arbitre. La
+modification, le refus, la régénération avec remarques et la mémoire du fil ont fonctionné.
+Le cas « serveur arrêté » affiche une erreur claire, et rien n'est mémorisé.
+Ces essais valident le chemin HTTP et l'interface, \emph{pas} un vrai modèle.
+
+\paragraph{3. Essai avec un vrai modèle local.}
+LM Studio n'étant pas disponible sur la machine de test (Mac Intel), nous avons utilisé
+\code{llama-server} (llama.cpp) avec le modèle \emph{Qwen2.5-3B-Instruct} (quantification
+Q4\_K\_M), uniquement sur processeur. Pour l'email 1 :
+\begin{itemize}
+  \item le routage a choisi le \code{StudentAgent} avec une confiance de 1,00 (contact + mot-clé), sans appel au LLM ;
+  \item le brouillon a été généré en 27 s environ et la relecture du critique en 42 s environ ;
+  \item le CriticAgent a donné 4/10 avec des remarques pertinentes : la question sur les
+        chapitres n'était pas traitée et les échéances n'étaient pas rappelées.
+\end{itemize}
+
+\paragraph{Observations.}
+Le routage par signaux est rapide et explicable, et il évite un appel au modèle dans les
+cas clairs. Le critique repère des oublis réels du petit modèle, ce qui justifie sa
+présence. En revanche, chaque appel coûte plusieurs dizaines de secondes sur
+processeur : le critique double le temps de traitement. Nous avons aussi constaté qu'un
+modèle de 3B paramètres peut affirmer des choses fausses sur lui-même, ce qui confirme
+qu'il faut toujours une validation humaine.
+
+\subsection{Banc d'expériences}
+\label{sec:banc}
+
+\paragraph{Jeu de données.} Le fichier \code{eval/dataset.json} contient 30 emails
+étiquetés. Chaque email indique l'agent attendu et, si besoin, d'autres agents
+acceptables. Les emails sont répartis en cinq catégories : cas clairs, expéditeurs
+inconnus, emails en français, contexte croisé (un contact connu qui écrit sur un sujet
+d'un autre contexte) et emails ambigus. Quatorze emails sont marqués pour l'évaluation de
+la qualité des réponses.
+
+\paragraph{Commande.} \code{java -cp "bin;lib/*" Evaluation routing|replies|log}, ou les
+cibles \code{make eval-routing}, \code{make eval-replies} et \code{make eval-log}. Les
+rapports Markdown, CSV et JSON sont écrits dans \code{eval/results/}. Un décorateur,
+\code{MeteredLLM}, compte les appels au modèle, la taille des prompts et le temps passé.
+
+\paragraph{Expérience 1 : routage.} Cinq configurations du routeur sont comparées.
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\linewidth}{l L}
+\toprule
+\textbf{Configuration} & \textbf{Description} \\
+\midrule
+full & signaux + arbitre LLM (système complet) \\
+rules-only & signaux seuls, sans arbitre \\
+llm-only & arbitre LLM seul, sans signaux \\
+no-keywords & sans le signal mots-clés \\
+content-only & sans les signaux contact et fil (contenu seul) \\
+\bottomrule
+\end{tabularx}
+\caption{Configurations du routeur comparées.}
+\end{table}
+
+Le rapport donne l'exactitude stricte (agent attendu) et l'exactitude tolérante (agent
+acceptable), les taux d'arbitrage et de repli, la matrice de confusion, la précision, le
+rappel et le F1 par agent, l'exactitude par catégorie et la liste des erreurs.
+
+\paragraph{Expérience 2 : qualité des réponses.} Quatre configurations rédigent une
+réponse pour chaque email.
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\linewidth}{l L}
+\toprule
+\textbf{Configuration} & \textbf{Description} \\
+\midrule
+multi-agent & routage + agent spécialisé, contexte sélectionné (BM25) \\
+multi-agent, tout le contexte & routage + agent spécialisé, sans sélection \\
+oracle & l'agent attendu est imposé, pour isoler la rédaction des erreurs de routage \\
+agent unique & baseline : un prompt générique et le contexte de \emph{tous} les agents, sans routage \\
+\bottomrule
+\end{tabularx}
+\caption{Configurations comparées pour la qualité des réponses.}
+\end{table}
+
+Chaque brouillon est noté par le \code{CriticAgent}, qui joue le rôle de juge, avec les
+règles et le contexte de l'agent attendu. Le rapport donne la note moyenne, le taux de
+brouillons approuvés ($\geq$ 7/10), la taille du contexte et du prompt, le temps par
+brouillon et la note par email. L'option \code{--judge-model} permet de prendre un modèle
+juge différent du rédacteur.
+
+\subsection{Résultats avec LM Studio}
+\label{sec:resultats}
+
+\paragraph{Conditions.} Serveur LM Studio local ; le modèle \emph{google/gemma-4-e4b}
+rédige, arbitre et juge. Les embeddings sont calculés par \emph{nomic-embed-text-v1.5}.
+Un appel au modèle prend environ 25\,s. C'est le premier essai du système avec LM Studio
+lui-même ; les essais précédents utilisaient llama.cpp.
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\linewidth}{L c c c}
+\toprule
+\textbf{Configuration} & \textbf{Exactitude stricte} & \textbf{Exactitude tolérante} & \textbf{Appels LLM} \\
+\midrule
+full (signaux + arbitre) & 87\,\% & 93\,\% & 15 \\
+rules-only & 63\,\% & 63\,\% & 0 \\
+llm-only & 87\,\% & 97\,\% & 30 \\
+no-keywords & 80\,\% & 90\,\% & -- \\
+content-only & 90\,\% & 97\,\% & -- \\
+\bottomrule
+\end{tabularx}
+\caption{Routage des 30 emails étiquetés.}
+\label{tab:routage}
+\end{table}
+
+\paragraph{Routage.}
+\begin{itemize}
+  \item L'arbitre LLM apporte 24 points par rapport aux signaux seuls.
+  \item La configuration \emph{full} atteint la même exactitude stricte que le LLM seul
+        avec deux fois moins d'appels au modèle : les signaux règlent les cas clairs sans
+        LLM.
+  \item Deux erreurs de \emph{full} sont instructives. Un collègue connu du projet de
+        recherche qui écrit au sujet d'un cours est envoyé au
+        \code{ResearchProjectAgent} : le vote du contact (1,0) suffit seul et l'arbitre
+        n'est pas consulté. Un « rapport d'activité annuel » en français part vers le
+        \code{TeacherAgent} dans toutes les configurations, faute de mots-clés
+        administratifs en français.
+  \item La configuration \emph{content-only}, qui fait mieux ici, montre que le signal
+        « contact » peut nuire quand le contenu contredit le rôle habituel de
+        l'expéditeur.
+\end{itemize}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\linewidth}{L c c c c c}
+\toprule
+\textbf{Configuration} & \textbf{Note /10} & \textbf{Approuvés} & \textbf{Contexte (car.)} & \textbf{Prompt (car.)} & \textbf{Temps} \\
+\midrule
+multi-agent (sélection BM25) & 7,83 & 83\,\% & 330 & 1\,523 & 49\,s \\
+multi-agent, tout le contexte & 8,00 & 80\,\% & 731 & 2\,058 & 50\,s \\
+oracle (agent attendu imposé) & 8,83 & 100\,\% & 243 & 1\,361 & 43\,s \\
+agent unique & 8,25 & 100\,\% & 3\,733 & 6\,102 & 62\,s \\
+\bottomrule
+\end{tabularx}
+\caption{Qualité des réponses sur 6 emails (temps par brouillon).}
+\label{tab:reponses}
+\end{table}
+
+\paragraph{Qualité des réponses.} Ces résultats donnent un premier élément de réponse à
+la question du sujet.
+\begin{itemize}
+  \item Quand le bon agent répond, l'organisation multi-agent obtient de meilleures notes
+        que l'agent unique (8,83 contre 8,25). Son prompt est 4,5 fois plus court et ses
+        réponses environ 30\,\% plus rapides.
+  \item L'écart du multi-agent complet vient d'un seul email mal routé, l'erreur de
+        contexte croisé ci-dessus, noté 3/10. Sans cet email, la moyenne est de 8,8. La
+        qualité du système dépend donc d'abord de la qualité du routage.
+  \item La sélection du contexte divise la taille du contexte par deux sans baisse de
+        qualité mesurable (7,83 contre 8,00, écart non significatif sur 6 emails).
+\end{itemize}
+
+\paragraph{Limites de ces résultats.}
+\begin{itemize}
+  \item L'échantillon est petit : 6 emails pour les réponses.
+  \item Le juge est le même petit modèle que le rédacteur, et il s'est montré indulgent :
+        des brouillons qui contenaient des champs à compléter (\code{[Your Name]}) ont
+        reçu 9 ou 10.
+  \item Une réponse en anglais à un email en français n'a pas été pénalisée.
+  \item Dans 3 cas sur 24, la réponse du juge n'a pas pu être lue. Ces cas sont exclus des
+        moyennes, ce qui favorise légèrement l'agent unique.
+\end{itemize}
+
+\paragraph{Embeddings contre BM25 (essai qualitatif).} La sélection par embeddings
+fonctionne (0,1 à 0,8\,s par email avec le cache, environ 10\,s au premier appel). Elle est
+cependant moins pertinente que BM25 sur les emails en français. Les préfixes de requête
+attendus par le modèle nomic ne sont pas encore utilisés.
+
+\paragraph{Améliorations identifiées (non réalisées).}
+\begin{itemize}
+  \item Baisser le poids du signal « contact » (environ 0,6) pour qu'un contenu
+        contradictoire déclenche l'arbitre.
+  \item Ajouter des mots-clés administratifs en français (rapport, activité\ldots).
+  \item Utiliser les préfixes attendus par le modèle d'embeddings.
+  \item Imposer dans les prompts de répondre dans la langue de l'email, sans champ à
+        compléter.
+  \item Refaire l'évaluation sur les 14 emails avec un juge plus grand.
+\end{itemize}
+
+% ------------------------------------------------------------------
+\section{Limites et perspectives}
+
+\paragraph{Limites.}
+\begin{itemize}
+  \item Avec LM Studio, l'évaluation porte sur peu d'emails (30 pour le routage, 6 pour la
+        qualité des réponses), et le juge est le même petit modèle que le rédacteur.
+  \item Les mots-clés sont lexicaux : un synonyme ou une forme non listée ne vote pas. Il
+        manque en particulier des mots-clés administratifs en français.
+  \item Le vote du contact suffit seul : quand le contenu contredit le rôle habituel de
+        l'expéditeur, l'arbitre n'est pas consulté.
+  \item Les emails sont saisis à la main ; il n'y a pas de connexion à une vraie boîte mail.
+  \item La mémoire n'envoie que les derniers messages du fil (6 par défaut), mais il n'y a
+        pas de résumé pour les longs échanges : les messages plus anciens sont ignorés.
+  \item Sur processeur, la latence est élevée, surtout avec le critique activé.
+\end{itemize}
+
+\paragraph{Perspectives.}
+Trois pistes de la première version ont été réalisées : la sélection des faits utiles
+par BM25 ou par \emph{embeddings} (RAG), le journal des décisions et la comparaison avec
+un agent unique (sections~\ref{sec:extensions} et~\ref{sec:banc}). Il reste à utiliser
+des \emph{embeddings} pour un routage sémantique, résumer les longs fils, ajuster les
+mots-clés à partir des corrections de l'utilisateur et du journal, et refaire
+l'évaluation sur plus d'emails avec un juge plus grand. Les améliorations identifiées
+par les expériences sont listées en section~\ref{sec:resultats}. Une importation des
+emails en lecture seule (IMAP) serait possible, à condition de conserver la validation
+humaine avant tout envoi.
+
+% ------------------------------------------------------------------
+\section{Conclusion}
+
+Ce projet nous a permis de construire un vrai système multi-agent autour d'un LLM local.
+Les agents ont des rôles, des connaissances et des règles distincts. Un coordinateur
+explicable décide qui répond et arbitre les cas ambigus. Le cycle BDI organise la
+rédaction et la validation, et un agent critique contrôle la qualité. L'organisation
+donne au modèle des prompts courts et ciblés, isole les contextes et reste facile à
+étendre : un agent s'ajoute sans modifier le code, et le moteur LLM peut être remplacé
+par un simple changement de configuration. La principale limite reste la qualité et la
+vitesse des petits modèles locaux, que l'organisation compense en partie sans les supprimer.
+
+Les premières mesures avec LM Studio (section~\ref{sec:resultats}) vont dans ce sens :
+quand le bon agent répond, les réponses sont mieux notées qu'avec un agent unique, avec un
+prompt 4,5 fois plus court. Elles montrent aussi que la qualité dépend d'abord du
+routage. Ces résultats restent à confirmer sur plus d'emails et avec un juge plus grand.
+
+% ------------------------------------------------------------------
+\section{Contributions des membres du groupe}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\linewidth}{l l L}
+\toprule
+\textbf{Étudiant} & \textbf{N° étudiant} & \textbf{Contributions} \\
+\midrule
+Mounia AREZZOUG & 22509499 &
+Participation à la conception de l'architecture initiale (routage, agents BDI) ;
+ajout de l'AdministrationAgent, du ResearchProjectAgent et du CriticAgent ;
+développement de l'interface graphique Swing (avec assistance IA, voir la déclaration) ;
+emails de démonstration et tests ; mise en place et essai avec un modèle local
+(llama.cpp, Qwen2.5-3B) ; mise à jour du README et intégration sur GitHub ;
+rédaction et mise en forme du rapport final. \\
+\addlinespace
+Yunus Emre DOGAN & 22508757 &
+Version de base du système (agents BDI, croyances et mémoire des fils,
+fabrique d'agents, client LLM, contacts) ; premiers agents (StudentAgent,
+TeacherAgent, GenericAgent) avec leurs prompts et contextes ; routage par vote
+de signaux avec seuils, arbitre LLM et repli GenericAgent ; boucle de
+validation humaine (intention BDI, accepter / modifier / refuser,
+\texttt{maxRetries}, mémorisation après validation) ; configuration du LLM et
+gestion des pannes ; Makefile, README initial, dépôt GitHub. \\
+\addlinespace
+Mathis LEVESQUE DU ROSTU & 22510354 &
+Sélection du contexte (BM25, embeddings locaux avec cache et repli) ; journal des
+décisions et rapport d'explicabilité ; jeu de 30 emails étiquetés et banc d'expériences
+(routage, multi-agent contre agent unique) ; exécution des expériences avec LM Studio et
+analyse des résultats ; correction du contexte dupliqué et tests associés. \\
+\addlinespace
+Nathan THIERY & 22512978 &
+Collaboration entre agents sur un email ambigu (section~\ref{sec:collab}) : conception et
+implémentation (agents concernés, répartition par l'arbitre LLM, filtrage des
+contributeurs, notes des contributeurs, fusion par l'agent principal, relecture du critique
+avec les notes) ; adaptation de l'interface (étape « Collaboration », agent principal et
+contributeurs dans le graphe, bouton \emph{Contributions}), du journal des décisions et du
+banc d'expériences (configurations \code{no-collaboration} et \code{multi-agent-no-collab}) ;
+paramétrage dans \code{config.json}.\\
+\bottomrule
+\end{tabularx}
+\caption{Répartition des contributions.}
+\end{table}
+
+\section*{Déclaration d'utilisation de l'intelligence artificielle}
+\addcontentsline{toc}{section}{Déclaration d'utilisation de l'intelligence artificielle}
+
+Des outils d'intelligence artificielle ont été utilisés comme assistance pendant ce projet.
+Ils ont principalement servi à améliorer la présentation visuelle de l'interface graphique,
+afin d'obtenir un rendu plus soigné et agréable à utiliser. Le code de l'interface a été
+développé puis amélioré progressivement, et non entièrement généré. Une assistance a
+également été utilisée ponctuellement lors de certaines étapes de développement, notamment
+pour l'ajout d'agents, de l'agent critique et des tests.
+
+L'architecture de base, le routage par signaux, le modèle BDI et la mémoire des conversations
+sont issus du travail du groupe. Les éléments ayant bénéficié d'une assistance par IA ont
+été étudiés et compris. Nous sommes en mesure d'expliquer l'architecture du projet, le
+fonctionnement des agents et les choix techniques réalisés.
+
+Pour la contribution de Mathis Levesque du Rostu (sélection du contexte, journal des
+décisions, banc d'expériences), un assistant de programmation IA (Claude Code) a servi à
+proposer les extensions, à écrire une grande partie du code et des tests, et à lancer les
+expériences. Les choix, les résultats et leurs limites ont été relus et analysés.
+
+La partie tests et mise à jour du README de l'implémentation de la fonctionnalité de collaboration entre agents sur un email ambigu (section~\ref{sec:collab}) a également
+été implémentée avec l'aide de Claude Code.
+
+% ------------------------------------------------------------------
+\appendix
+\section{Réponses aux questions de conception du sujet}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\linewidth}{>{\raggedright\arraybackslash}p{4.3cm} L}
+\toprule
+\textbf{Question} & \textbf{Réponse} \\
+\midrule
+Qu'est-ce qu'un agent ? & Une entité autonome avec un rôle, un prompt, ses croyances, un désir et des intentions (\code{BDIAgent}), plus le coordinateur et le critique. \\
+Ses responsabilités ? & Routeur : choisir et coordonner. Agent spécialisé : rédiger et mémoriser. Critique : évaluer. \\
+Quelles informations possède-t-il ? & Ses fichiers de contexte et la mémoire de ses propres fils. \\
+Comment communiquent-ils ? & Par objets-messages (Email, Intention, Proposal, Feedback, Critique), via le RoutingAgent. \\
+Comment choisir l'agent ? & Votes de quatre signaux, seuils 75\,\% et 0,7, sinon arbitre LLM. \\
+Plusieurs agents conviennent ? & L'arbitre tranche entre les agents en conflit ; si l'email contient des demandes distinctes, il désigne un agent principal et des contributeurs dont les notes sont fusionnées (section~\ref{sec:collab}). \\
+Aucun ne convient ? & L'arbitre choisit parmi tous ; si confiance < 0,6, GenericAgent. \\
+Représentation des contextes ? & Fichiers texte \code{date | fait} par agent, modifiables depuis l'interface. \\
+Historique des conversations ? & Croyances EMAIL / REPLY par fil, enregistrées après validation seulement. \\
+Éviter trop de contexte ? & Seuls le contexte de l'agent choisi et le fil courant sont utilisés ; parmi eux, seuls les faits les plus pertinents (BM25 ou embeddings, 8 au plus) et les 6 derniers messages du fil sont envoyés. \\
+Ajouter un agent ? & Créer un dossier (ou utiliser l'interface), sans modifier le code. \\
+Changer de LLM ? & Modifier \code{config.json} ; un autre moteur = une classe qui implémente \code{LLM}. \\
+Données persistantes ? & \code{agent.json}, prompts, contextes, contacts, mémoire validée, \code{config.json}. \\
+Avantages et limites ? & Prompts ciblés, routage explicable, isolation, contrôle humain ; appels LLM supplémentaires et dépendance aux mots-clés. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\end{document}
