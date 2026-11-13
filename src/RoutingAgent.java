@@ -7,7 +7,7 @@ import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 public class RoutingAgent{
-    private static final String FALLBACK_ROLE = "GENERIC";
+    public static final String FALLBACK_ROLE = "GENERIC";
     private static final double AGREEMENT = 0.75; // part minimale du gagnant pour decider sans le LLM
     private static final double MIN_SCORE = 0.7;  // score total minimal du gagnant : contact ou fil suffisent seuls,
                                                   // domaine ou mots-cles seuls non (ils doivent se confirmer entre eux)
@@ -49,6 +49,7 @@ public class RoutingAgent{
             return handle(email);
         } catch (RuntimeException e) {
             notify(currentStage, StageStatus.FAILED, e.getMessage());
+            for (WorkflowListener l : listeners) l.failed(email, currentStage, e.getMessage());
             throw e;
         }
     }
@@ -57,17 +58,14 @@ public class RoutingAgent{
         notify(WorkflowStage.RECEIVED, StageStatus.COMPLETED,
                "From " + email.getSenderAddress() + "\nSubject: " + email.getSubject());
 
-        notify(WorkflowStage.ROUTING, StageStatus.PROCESSING, "Collecting the routing signals");
-        Map<String, Double> scores = new HashMap<>();
-        List<String> signals = new ArrayList<>();
-        RoutingDecision decision = decide(email, scores, signals);
-        boolean arbiterConsulted = signals.stream().anyMatch(s -> s.contains("-> arbiter among"));
+        RoutingOutcome routing = classify(email);
+        RoutingDecision decision = routing.decision();
         Agent agent = agents.get(decision.getRole());
-        notify(WorkflowStage.ROUTING, StageStatus.COMPLETED, routingSummary(decision, arbiterConsulted));
+        notify(WorkflowStage.ROUTING, StageStatus.COMPLETED, routingSummary(routing));
         notify(WorkflowStage.SELECTION, StageStatus.COMPLETED,
                agent.getName() + String.format(" selected (confidence %.2f)", decision.getConfidence()));
         for (WorkflowListener l : listeners) {
-            l.agentSelected(agent, decision, Map.copyOf(scores), List.copyOf(signals), arbiterConsulted);
+            l.agentSelected(agent, decision, routing.scores(), routing.signals(), routing.arbiterConsulted());
         }
 
         String knownName = contacts.getName(email.getSenderAddress());
@@ -77,22 +75,28 @@ public class RoutingAgent{
         notify(WorkflowStage.TRANSMISSION, StageStatus.COMPLETED,
                "Email forwarded to " + agent.getName() + ", intention adopted (at most "
                + intention.getMaxAttempts() + " drafts)");
-        notify(WorkflowStage.CONTEXT, StageStatus.COMPLETED, describe(agent.recall(email.getThreadID())));
+        ContextSelection context = agent.selectContext(email);
+        notify(WorkflowStage.CONTEXT, StageStatus.COMPLETED, context.summary());
+        for (WorkflowListener l : listeners) l.contextSelected(agent, context);
 
         while (intention.isActive()) {
             int attempt = intention.getAttempts() + 1;
             notify(WorkflowStage.GENERATION, StageStatus.PROCESSING,
                    "Draft " + attempt + "/" + intention.getMaxAttempts() + " requested from the local LLM");
+            long start = System.nanoTime();
             String draft = agent.draft(intention);
+            long generationMillis = (System.nanoTime() - start) / 1_000_000;
             notify(WorkflowStage.GENERATION, StageStatus.COMPLETED,
                    "Draft " + attempt + "/" + intention.getMaxAttempts() + " written by " + agent.getName());
             Critique critique = review(email, agent, draft);
+            for (WorkflowListener l : listeners) l.draftProduced(attempt, draft, critique, generationMillis);
             Proposal proposal = new Proposal(email, agent, decision, draft,
                                              intention.getAttempts(), intention.getMaxAttempts(), critique);
             notify(WorkflowStage.PROPOSAL, StageStatus.COMPLETED,
                    "Draft " + attempt + " returned to the user");
             notify(WorkflowStage.VALIDATION, StageStatus.PROCESSING, "Waiting for the user's decision");
             Feedback feedback = validator.review(proposal);
+            for (WorkflowListener l : listeners) l.feedbackReceived(attempt, feedback);
             agent.reconsider(intention, feedback);
             if (feedback.getType() == Feedback.Type.REJECT && intention.isActive()) {
                 notify(WorkflowStage.VALIDATION, StageStatus.PROCESSING, "Draft rejected, a new draft is requested");
@@ -107,7 +111,21 @@ public class RoutingAgent{
         }
 
         notifyOutcome(intention, agent);
+        for (WorkflowListener l : listeners) l.finished(email, intention);
         return intention;
+    }
+
+    // Routage seul, sans redaction : quel agent doit repondre, et pourquoi.
+    // Utilise par le traitement complet et par les experiences (Evaluation).
+    public RoutingOutcome classify(Email email){
+        long start = System.nanoTime();
+        notify(WorkflowStage.ROUTING, StageStatus.PROCESSING, "Collecting the routing signals");
+        Map<String, Double> scores = new HashMap<>();
+        List<String> signals = new ArrayList<>();
+        boolean[] arbiterConsulted = {false};
+        RoutingDecision decision = decide(email, scores, signals, arbiterConsulted);
+        return new RoutingOutcome(decision, Map.copyOf(scores), List.copyOf(signals), arbiterConsulted[0],
+                                  (System.nanoTime() - start) / 1_000_000);
     }
 
     private Critique review(Email email, Agent agent, String draft){
@@ -134,7 +152,8 @@ public class RoutingAgent{
     }
 
     // chaque maillon vote pour un agent ; on additionne les votes par agent
-    private RoutingDecision decide(Email email, Map<String, Double> scores, List<String> signals){
+    private RoutingDecision decide(Email email, Map<String, Double> scores, List<String> signals,
+                                   boolean[] arbiterConsulted){
         for (RoutingStep step : steps) {
             vote(step.decide(email), scores, signals);
         }
@@ -155,6 +174,7 @@ public class RoutingAgent{
         notify(WorkflowStage.ROUTING, StageStatus.PROCESSING,
                (scores.size() > 1 ? "Conflicting" : "Weak") + " signals: the LLM arbiter is consulted");
 
+        arbiterConsulted[0] = true;
         RoutingDecision d = arbiter.choose(email, candidates);
         if (d != null && d.getConfidence() >= ARBITER_MIN) {
             signals.add(String.format("%s: %s %.2f", d.getReason(), d.getRole(), d.getConfidence()));
@@ -194,20 +214,10 @@ public class RoutingAgent{
         return new RoutingDecision(role, share(scores, role), String.join(", ", signals));
     }
 
-    private String routingSummary(RoutingDecision decision, boolean arbiterConsulted){
-        if (decision.getConfidence() == 0.0 && FALLBACK_ROLE.equals(decision.getRole())) {
-            return "No agent is suitable enough: fallback to the generic agent";
-        }
-        if (arbiterConsulted) return "Decision taken by the LLM arbiter (LlmClassifierStep)";
+    private String routingSummary(RoutingOutcome routing){
+        if (routing.fallback()) return "No agent is suitable enough: fallback to the generic agent";
+        if (routing.arbiterConsulted()) return "Decision taken by the LLM arbiter (LlmClassifierStep)";
         return "Signals agree, decision taken without the LLM";
-    }
-
-    private String describe(List<Belief> beliefs){
-        int base = 0, history = 0;
-        for (Belief b : beliefs) {
-            if (b.getSource() == Belief.Source.BASE) base++; else history++;
-        }
-        return base + " context belief(s) and " + history + " message(s) from this thread's memory";
     }
 
     private void notify(WorkflowStage stage, StageStatus status, String detail){

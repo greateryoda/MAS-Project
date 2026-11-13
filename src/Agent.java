@@ -10,6 +10,8 @@ public interface Agent{
     public boolean knowsThread(int threadID);
 
     public List<Belief> recall(int threadID);
+    // contexte effectivement transmis au LLM pour cet email (selection + derniers messages du fil)
+    public ContextSelection selectContext(Email email);
     public void reload() throws IOException;
 
     // desir -> intention : l'agent s'engage a repondre a cet email

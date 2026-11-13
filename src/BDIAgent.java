@@ -14,10 +14,19 @@ public class BDIAgent implements Agent {
     private volatile String description;
     private volatile List<String> keywords;
     private volatile int maxRetries;
+    private final ContextSelectorFactory selectors;
+    private volatile ContextSelector selector;
+    private volatile int maxBeliefs;
+    private volatile int maxThreadMessages;
 
     public BDIAgent(String configPath, LLM llm) throws IOException {
+        this(configPath, llm, ContextSelectorFactory.defaults());
+    }
+
+    public BDIAgent(String configPath, LLM llm, ContextSelectorFactory selectors) throws IOException {
         this.configPath = configPath;
         this.llm = llm;
+        this.selectors = selectors;
         AgentConfig config = AgentConfig.load(configPath);
         this.name = config.getName();
         this.role = config.getRole();
@@ -35,6 +44,10 @@ public class BDIAgent implements Agent {
         this.description = config.getDescription();
         this.keywords = List.copyOf(config.getKeywords());
         this.maxRetries = config.getMaxRetries();
+        this.selector = selectors.create(config.getContextStrategy());
+        this.maxBeliefs = config.getMaxBeliefs() > 0 ? config.getMaxBeliefs() : selectors.defaultMaxBeliefs();
+        this.maxThreadMessages = config.getMaxThreadMessages() > 0
+                ? config.getMaxThreadMessages() : selectors.defaultMaxThreadMessages();
         beliefs.loadContext(config.getContextFiles());
     }
 
@@ -48,6 +61,23 @@ public class BDIAgent implements Agent {
         return beliefs.get(threadID);
     }
 
+    // on ne transmet au LLM que les croyances de base utiles a cet email (strategie configurable)
+    // et les derniers messages du fil : le fil recent est toujours pertinent, l'historique ancien beaucoup moins
+    public ContextSelection selectContext(Email email) {
+        List<Belief> base;
+        List<Belief> thread;
+        synchronized (this) {
+            base = beliefs.base();
+            thread = beliefs.thread(email.getThreadID());
+        }
+        ContextSelector current = selector;
+        List<Belief> chosen = current.select(email, base, maxBeliefs);
+        List<Belief> recent = thread.size() > maxThreadMessages
+                ? thread.subList(thread.size() - maxThreadMessages, thread.size()) : thread;
+        return new ContextSelection(current.name(), List.copyOf(chosen), base.size(),
+                                    List.copyOf(recent), thread.size());
+    }
+
     // l'agent a deja traite un email de ce fil
     public synchronized boolean knowsThread(int threadID) {
         return threadID != Belief.NO_THREAD && beliefs.contains(threadID);
@@ -59,7 +89,7 @@ public class BDIAgent implements Agent {
 
     public String draft(Intention intention) {
         Email email = intention.getEmail();
-        String history = toPromptText(recall(email.getThreadID()));
+        String history = toPromptText(selectContext(email).all());
 
         String sender = email.getSenderAddress();
         if (email.getSenderName() != null) {

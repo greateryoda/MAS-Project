@@ -93,6 +93,165 @@ public class ScenarioTests {
         }
     }
 
+    // ---------- piste 2 : selection du contexte ----------
+    static void contextSelection(List<DemoEmail> demo) throws Exception {
+        System.out.println("13. Context selection");
+        Email exam = demo.get(0).toEmail();
+        Setup s = setup(false);
+        Agent student = s.assistant().getRegistry().get("STUDENT");
+        ContextSelection ctx = student.selectContext(exam);
+        String chosen = ctx.base().stream().map(Belief::getContent).toList().toString();
+        check("lexical is the default strategy", ctx.strategy().equals("lexical"), ctx.strategy());
+        check("the exam belief is selected", chosen.contains("Final exam"), chosen);
+        check("unrelated beliefs are left out", !chosen.contains("TP1 Flocking") && ctx.base().size() < ctx.baseAvailable(),
+              ctx.summary());
+        check("Terms: accents, case and stemming", Terms.of("Réunion EXAMEN examens TP2 the").equals(List.of("reun", "exam", "exam", "tp2")),
+              Terms.of("Réunion EXAMEN examens TP2 the").toString());
+
+        List<Belief> many = new ArrayList<>();
+        for (int i = 0; i < 20; i++) many.add(new Belief("exam fact number " + i, 1, Belief.Source.BASE, Belief.NO_THREAD, "d"));
+        check("maxBeliefs is respected", new LexicalContextSelector().select(exam, many, 5).size() == 5, "");
+        check("AllContextSelector keeps everything", new AllContextSelector().select(exam, many, 5).size() == 20, "");
+        List<Belief> recalled = student.recall(Belief.NO_THREAD);
+        check("recall(NO_THREAD) returns each base belief once", recalled.size() == ctx.baseAvailable(),
+              recalled.size() + " vs " + ctx.baseAvailable());
+
+        // embeddings simules : vecteur [1,0] si le texte parle d'examen, [0,1] sinon
+        Embedder fake = texts -> texts.stream()
+                .map(t -> t.toLowerCase().contains("exam") ? new double[] {1, 0} : new double[] {0, 1}).toList();
+        List<Belief> base = student.recall(Belief.NO_THREAD).stream().filter(b -> b.getSource() == Belief.Source.BASE).toList();
+        List<Belief> picked = new EmbeddingContextSelector(fake, new LexicalContextSelector()).select(exam, base, 1);
+        check("embedding selection ranks by cosine similarity", picked.size() == 1 && picked.get(0).getContent().toLowerCase().contains("exam"),
+              picked.toString());
+        Embedder down = texts -> { throw new LlmException("embedding server down", null); };
+        EmbeddingContextSelector degraded = new EmbeddingContextSelector(down, new LexicalContextSelector());
+        List<Belief> fallback = degraded.select(exam, base, 3);
+        check("embedding failure falls back to lexical", !fallback.isEmpty() && degraded.name().contains("lexical"), degraded.name());
+        int[] calls = {0};
+        CachingEmbedder cache = new CachingEmbedder(texts -> { calls[0] += texts.size(); return fake.embed(texts); });
+        cache.embed(List.of("a", "b"));
+        cache.embed(List.of("a", "b", "c"));
+        check("CachingEmbedder embeds each text once", calls[0] == 3, "calls=" + calls[0]);
+
+        boolean rejected = false;
+        try { ContextSelectorFactory.defaults().create("magic"); } catch (IllegalArgumentException e) { rejected = true; }
+        check("unknown strategy is rejected", rejected, "");
+        check("forcing overrides the agent's strategy",
+              ContextSelectorFactory.defaults().forcing("all").create("lexical").name().equals("all"), "");
+
+        // strategie par agent dans agent.json
+        Path json = Path.of("agents/student/agent.json");
+        String original = Files.readString(json);
+        Files.writeString(json, original.replaceFirst("\\{", "{\"context\": {\"strategy\": \"all\", \"maxThreadMessages\": 1},"));
+        student.reload();
+        ctx = student.selectContext(exam);
+        check("per-agent strategy read from agent.json", ctx.strategy().equals("all") && ctx.base().size() == ctx.baseAvailable(), ctx.summary());
+        Files.writeString(json, original);
+        student.reload();
+
+        // le fil recent est toujours transmis, borne par maxThreadMessages (fil 1001 memorise au test 4)
+        ctx = s.assistant().getRegistry().get("STUDENT").selectContext(demo.get(5).toEmail());
+        check("recent thread messages always sent", ctx.thread().size() >= 2 && ctx.threadAvailable() >= 2, ctx.summary());
+        s.validator().answers.add(Feedback.discard());
+        s.events().events.clear();
+        s.assistant().process(exam);
+        check("draft prompt only contains the selected context", !s.llm().messages.get(s.llm().messages.size() - 1).contains("TP1 Flocking"), "");
+    }
+
+    // ---------- piste 8 : journal des decisions ----------
+    static void decisionLog(List<DemoEmail> demo) throws Exception {
+        System.out.println("14. Decision log");
+        Path file = Path.of("logs/test-decisions.jsonl");
+        Files.deleteIfExists(file);
+        Setup s = setup(true);
+        s.assistant().addListener(new DecisionLogger(file.toString(), "scripted", false));
+        s.validator().answers.add(Feedback.reject("Too long"));
+        s.validator().answers.add(Feedback.accept());
+        s.assistant().process(new Email("lea.martin@etu.univ.fr", "TP2 deadline", "When is the TP2 deadline? SECRET-BODY",
+                                        "01/12/2026", 2001));
+        s.validator().answers.add(Feedback.discard());
+        s.assistant().process(demo.get(4).toEmail());
+        s.llm().down = true;
+        try { s.assistant().process(demo.get(2).toEmail()); } catch (LlmException e) { /* attendu */ }
+
+        List<com.fasterxml.jackson.databind.JsonNode> log = DecisionLogReport.read(file);
+        check("one line per processed email (including failures)", log.size() == 3, "lines=" + log.size());
+        if (log.size() == 3) {
+            var first = log.get(0);
+            check("routing explained (agent, signals, scores, explanation)",
+                  first.path("routing").path("role").asText().equals("STUDENT")
+                  && first.path("routing").path("signals").size() > 0
+                  && first.path("routing").path("explanation").asText().contains("without the LLM"), first.path("routing").toString());
+            check("context selection logged", first.path("context").path("strategy").asText().equals("lexical")
+                  && first.path("context").path("beliefsAvailable").asInt() > 0, first.path("context").toString());
+            check("each draft logged with critique and feedback",
+                  first.path("attempts").size() == 2
+                  && first.path("attempts").path(0).path("critique").path("score").asInt() == 6
+                  && first.path("attempts").path(0).path("feedback").asText().equals("REJECT")
+                  && first.path("attempts").path(0).path("reason").asText().equals("Too long")
+                  && first.path("attempts").path(1).path("feedback").asText().equals("ACCEPT"), first.path("attempts").toString());
+            check("outcome and draft count logged", first.path("outcome").asText().equals("ACCEPTED")
+                  && first.path("draftCount").asInt() == 2, first.toString());
+            check("email body and drafts not written by default", !Files.readString(file).contains("SECRET-BODY")
+                  && !first.path("attempts").path(0).has("draft"), "");
+            check("arbiter decision logged", log.get(1).path("routing").path("arbiterConsulted").asBoolean()
+                  && log.get(1).path("outcome").asText().equals("DISCARDED"), log.get(1).toString());
+            check("failure logged with its stage", log.get(2).path("outcome").asText().equals("ERROR")
+                  && log.get(2).path("failedStage").asText().equals("GENERATION"), log.get(2).toString());
+        }
+        String report = DecisionLogReport.markdown(log, file.toString());
+        check("log report: per agent stats, calibration, reasons",
+              report.contains("StudentAgent") && report.contains("| REJECT | 1 | 6.00 |") && report.contains("Too long"), report);
+    }
+
+    // ---------- piste 1 : experiences ----------
+    static void evaluation() throws Exception {
+        System.out.println("15. Evaluation harness");
+        List<LabelledEmail> dataset = LabelledEmail.load("eval/dataset.json");
+        check("dataset loaded with labels", dataset.size() >= 25 && dataset.stream().anyMatch(e -> e.acceptable().size() > 1),
+              "size=" + dataset.size());
+
+        ScriptedLlm llm = new ScriptedLlm();
+        AgentRegistry registry = new AgentRegistry(new File("agents"), new AgentFactory(llm));
+        TemporaryContactBook contacts = new TemporaryContactBook("agents/contacts.json");
+        RoutingEvaluation routing = new RoutingEvaluation(registry, contacts, llm);
+        List<RoutingEvaluation.ConfigResult> runs = new ArrayList<>();
+        for (String c : RoutingEvaluation.CONFIGS.keySet()) runs.add(routing.run(c, dataset));
+        RoutingEvaluation.ConfigResult full = runs.get(0), rules = runs.get(1), llmOnly = runs.get(2);
+        check("every configuration routes every email", runs.stream().allMatch(r -> r.results().size() == dataset.size()
+              && r.results().stream().noneMatch(x -> x.predicted().equals("ERROR"))), "");
+        check("rules-only never calls the LLM", rules.llm().calls() == 0, "calls=" + rules.llm().calls());
+        check("llm-only calls the LLM for every email", llmOnly.llm().calls() == dataset.size() && llmOnly.arbiterRate() == 1.0,
+              "calls=" + llmOnly.llm().calls());
+        check("full routing beats the (scripted) LLM alone", full.lenientAccuracy() > llmOnly.lenientAccuracy(),
+              full.lenientAccuracy() + " vs " + llmOnly.lenientAccuracy());
+        check("lenient accuracy >= strict accuracy", full.lenientAccuracy() >= full.strictAccuracy(), "");
+        String md = RoutingEvaluation.markdown(runs, "scripted", "eval/dataset.json");
+        check("routing report has summary, confusion matrix and errors",
+              md.contains("| full |") && md.contains("Confusion matrix") && md.contains("Precision") && md.contains("Errors ("), "");
+        check("routing CSV has one row per email and config",
+              RoutingEvaluation.csv(runs).split("\n").length == 1 + dataset.size() * runs.size(), "");
+
+        MeteredLLM meter = new MeteredLLM(llm);
+        meter.ask("sys", "hello");
+        check("MeteredLLM counts calls and prompt size", meter.snapshot().calls() == 1 && meter.snapshot().promptChars() == 8, "");
+
+        List<LabelledEmail> replies = dataset.stream().filter(LabelledEmail::reply).limit(3).toList();
+        CriticAgent judge = new CriticAgent(llm, "critic/attitude_critic.txt", true);
+        ReplyEvaluation evaluation = new ReplyEvaluation(llm, ContextSelectorFactory.defaults(), judge, registry, contacts);
+        List<ReplyEvaluation.ConfigResult> rr = new ArrayList<>();
+        for (String c : ReplyEvaluation.CONFIGS.keySet()) rr.add(evaluation.run(c, replies));
+        ReplyEvaluation.ConfigResult multi = rr.get(0), all = rr.get(1), single = rr.get(3);
+        check("every reply configuration produces judged drafts",
+              rr.stream().allMatch(r -> r.errors() == 0 && r.unjudged() == 0 && r.meanScore() == 6.0), "");
+        check("context selection shrinks the prompt", multi.meanPrompt() < all.meanPrompt(),
+              multi.meanPrompt() + " vs " + all.meanPrompt());
+        check("single agent sends the largest prompt", single.meanPrompt() > all.meanPrompt(),
+              single.meanPrompt() + " vs " + all.meanPrompt());
+        check("reply report and JSON produced", ReplyEvaluation.markdown(rr, "scripted", "scripted", "d").contains("| single-agent |")
+              && ReplyEvaluation.json(rr).contains("\"draft\""), "");
+    }
+
     public static void main(String[] args) throws Exception {
         clearMemory();
         List<DemoEmail> demo = DemoEmail.load("demo/emails.json");
@@ -229,6 +388,10 @@ public class ScenarioTests {
         String added = reg.importContextFile("THESIS", extra.toFile());
         check("imported file associated as context", reg.configOf("THESIS").getContextFiles().contains(added)
               && reg.get("THESIS").recall(-1).stream().anyMatch(b -> b.getContent().contains("6 weeks")), added);
+
+        contextSelection(demo);
+        decisionLog(demo);
+        evaluation();
 
         System.out.println();
         System.out.println(passed + " passed, " + failed + " failed");
