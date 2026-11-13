@@ -6,8 +6,10 @@ import java.awt.Font;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import javax.swing.BorderFactory;
 import javax.swing.Box;
@@ -15,10 +17,11 @@ import javax.swing.BoxLayout;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.JScrollPane;
 
 public class RoutingPanel extends Card {
     private final AgentNetworkView network = new AgentNetworkView();
-    private final JPanel info = new JPanel();
+    private final JPanel info = new ScrollablePanel(null);
     private final EmailAssistant assistant;
 
     public RoutingPanel(EmailAssistant assistant) {
@@ -35,8 +38,13 @@ public class RoutingPanel extends Card {
 
         info.setOpaque(false);
         info.setLayout(new BoxLayout(info, BoxLayout.Y_AXIS));
-        info.setPreferredSize(new Dimension(300, 270));
-        add(info, BorderLayout.WEST);
+        // colonne defilante : les signaux (et une eventuelle collaboration) peuvent depasser la hauteur du panneau
+        JScrollPane infoScroll = Theme.scroll(info, false);
+        infoScroll.setOpaque(false);
+        infoScroll.getViewport().setOpaque(false);
+        infoScroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+        infoScroll.setPreferredSize(new Dimension(314, 270));
+        add(infoScroll, BorderLayout.WEST);
         add(network, BorderLayout.CENTER);
         reset();
     }
@@ -60,7 +68,9 @@ public class RoutingPanel extends Card {
 
     public void showDecision(Agent agent, RoutingDecision decision, Map<String, Double> scores,
                              List<String> signals, boolean arbiterConsulted) {
-        network.setRouting(agent.getRole(), scores, arbiterConsulted);
+        Set<String> helpers = new LinkedHashSet<>();
+        for (RoutingDecision.Collaborator c : decision.getCollaborators()) helpers.add(c.role());
+        network.setRouting(agent.getRole(), scores, arbiterConsulted, helpers);
         info.removeAll();
 
         JPanel who = new JPanel();
@@ -72,7 +82,8 @@ public class RoutingPanel extends Card {
         names.setOpaque(false);
         names.setLayout(new BoxLayout(names, BoxLayout.Y_AXIS));
         names.add(Theme.label(agent.getName(), Theme.font(Font.BOLD, 15), Theme.TEXT));
-        names.add(Theme.caption("role " + agent.getRole()));
+        names.add(Theme.caption("role " + agent.getRole()
+                + (decision.isCollaborative() ? " · main agent, merges the contributions" : "")));
         who.add(names);
         put(info, who);
 
@@ -101,6 +112,10 @@ public class RoutingPanel extends Card {
         chips.add(chip("RoutingAgent", Theme.ACCENT));
         if (arbiterConsulted) chips.add(chip("LLM arbiter", Theme.WARNING));
         chips.add(chip(agent.getName(), Theme.agentColor(agent.getRole())));
+        for (String role : helpers) {
+            Agent helper = assistant.getRegistry().get(role);
+            if (helper != null) chips.add(chip(helper.getName() + " (contributor)", Theme.agentColor(role)));
+        }
         chips.add(chip("Local LLM", new Color(0x0F766E)));
         if (assistant.getCritic().isEnabled()) chips.add(chip("CriticAgent", new Color(0x7C3AED)));
         chips.add(chip("User", Theme.TEXT_MUTED));

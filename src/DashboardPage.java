@@ -68,7 +68,8 @@ public class DashboardPage extends Page {
                 + "• Keywords (0.5 to 0.75): agent keywords in the email\n"
                 + "• Domain or mailbox (0.6): e.g. etu.univ.fr, scolarite@\n"
                 + "If the winner has less than 75% of the votes or a score below 0.7, "
-                + "the local LLM arbitrates; otherwise GenericAgent answers.",
+                + "the local LLM arbitrates; otherwise GenericAgent answers.\n"
+                + "Several agents concerned: the arbiter may make them collaborate, each one answering its part.",
                 300, Theme.font(Font.PLAIN, 12), Theme.TEXT_MUTED), BorderLayout.CENTER);
 
         JPanel right = new JPanel(new BorderLayout(0, 16));

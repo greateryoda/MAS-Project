@@ -104,6 +104,20 @@ public class BDIAgent implements Agent {
                     + "\n\n" + email.getBody()
                     + "\n\nWrite a reply draft to this email.";
 
+        // collaboration : d'autres agents specialises ont repondu a une partie de l'email,
+        // l'agent principal fusionne leurs notes dans une reponse unique, avec son propre ton
+        List<Contribution> notes = intention.getContributions().stream().filter(Contribution::available).toList();
+        if (!notes.isEmpty()) {
+            message += "\n\nCONTRIBUTIONS FROM OTHER SPECIALIZED AGENTS (each one knows its own domain; "
+                    + "use their information for the part they answered, do not contradict it and do not add "
+                    + "facts they did not give):\n";
+            for (Contribution c : notes) {
+                message += "- " + c.agentName() + ", about \"" + c.part() + "\":\n" + c.text().trim() + "\n";
+            }
+            message += "Write ONE reply that answers the whole email: your own part with your known information, "
+                    + "and the other parts with these contributions.";
+        }
+
         // apres un refus : on montre le brouillon precedent et les remarques de l'utilisateur
         if (!intention.getRejections().isEmpty()) {
             message += "\n\nYOUR PREVIOUS DRAFT:\n" + intention.getDraft()
@@ -117,6 +131,22 @@ public class BDIAgent implements Agent {
         String answer = llm.ask(systemPrompt, message);
         intention.newDraft(answer);
         return answer;
+    }
+
+    // collaboration : l'agent ne redige pas l'email, il fournit a l'agent principal une note
+    // sur sa partie, avec ses regles (system prompt) et le contexte qu'il juge pertinent
+    public String contribute(Email email, String part, String leadName) {
+        String known = toPromptText(selectContext(email).all());
+        String message = "COLLABORATION REQUEST from " + leadName + ", who writes the reply to the email below.\n"
+                + "Your part: " + part + "\n\n"
+                + "KNOWN INFORMATION AND HISTORY:\n" + known
+                + "\nEMAIL:\nFrom: " + email.getSenderAddress()
+                + "\nSubject: " + email.getSubject()
+                + "\n\n" + email.getBody()
+                + "\n\nAnswer ONLY your part, for " + leadName + " (not for the sender): a short factual note of "
+                + "2 to 5 sentences, no greeting and no signature. Respect your rules. Use only the known "
+                + "information; if something is not known, say that it must be confirmed.";
+        return llm.ask(systemPrompt, message);
     }
 
     public void reconsider(Intention intention, Feedback feedback) {

@@ -61,6 +61,10 @@ public class DecisionLogger implements WorkflowListener {
         new TreeMap<>(scores).forEach((role, score) -> votes.put(role, round(score)));
         ArrayNode list = routing.putArray("signals");
         signals.forEach(list::add);
+        ArrayNode collaborators = routing.putArray("collaborators");
+        for (RoutingDecision.Collaborator c : decision.getCollaborators()) {
+            collaborators.addObject().put("role", c.role()).put("part", c.part());
+        }
         routing.put("explanation", new RoutingOutcome(decision, scores, signals, arbiterConsulted, 0).explanation());
         routing.put("millis", elapsed());
     }
@@ -78,6 +82,21 @@ public class DecisionLogger implements WorkflowListener {
             ArrayNode beliefs = node.putArray("beliefs");
             for (Belief b : context.base()) beliefs.add(excerpt(b.getContent()));
         }
+    }
+
+    public synchronized void contributionProduced(Agent contributor, Contribution contribution) {
+        if (current == null) return;
+        ArrayNode list = current.has("contributions") ? (ArrayNode) current.get("contributions")
+                                                      : current.putArray("contributions");
+        ObjectNode node = list.addObject();
+        node.put("agent", contribution.agentName());
+        node.put("role", contribution.role());
+        node.put("part", contribution.part());
+        node.put("available", contribution.available());
+        node.put("millis", contribution.millis());
+        node.put("chars", contribution.text() == null ? 0 : contribution.text().length());
+        if (contribution.error() != null) node.put("error", contribution.error());
+        if (includeText && contribution.text() != null) node.put("text", contribution.text());
     }
 
     public synchronized void draftProduced(int attempt, String draft, Critique critique, long generationMillis) {

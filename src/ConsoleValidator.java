@@ -10,6 +10,10 @@ public class ConsoleValidator implements Validator {
             System.out.println("Router chose: " + p.getAgent().getName()
                     + " (" + p.getDecision().getReason()
                     + ", confidence " + String.format("%.2f", p.getDecision().getConfidence()) + ")");
+            for (Contribution c : p.getContributions()) {
+                System.out.println("Contribution of " + c.agentName() + " (" + c.part() + "): "
+                        + (c.available() ? c.text().trim() : "unavailable, " + c.error()));
+            }
         }
         System.out.println("----- Draft " + p.getAttempt() + "/" + p.getMaxAttempts() + " -----");
         System.out.println(p.getDraft());

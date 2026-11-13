@@ -4,6 +4,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 public class RoutingAgent{
@@ -21,6 +22,8 @@ public class RoutingAgent{
     private CriticAgent critic;
     private final List<WorkflowListener> listeners = new CopyOnWriteArrayList<>();
     private WorkflowStage currentStage = WorkflowStage.RECEIVED;
+    // collaboration : nombre maximal d'agents contributeurs en plus de l'agent principal (0 = desactivee)
+    private volatile int maxCollaborators = 1;
 
     public RoutingAgent(Map<String, Agent> agents, TemporaryContactBook contacts,
                         List<RoutingStep> steps, Arbiter arbiter, Validator validator){
@@ -40,6 +43,14 @@ public class RoutingAgent{
 
     public void addListener(WorkflowListener listener){
         listeners.add(listener);
+    }
+
+    public void setMaxCollaborators(int max){
+        this.maxCollaborators = Math.max(0, max);
+    }
+
+    public int getMaxCollaborators(){
+        return maxCollaborators;
     }
 
     // le routeur transmet l'email a l'agent, puis fait l'intermediaire entre l'agent et l'utilisateur
@@ -73,11 +84,16 @@ public class RoutingAgent{
 
         Intention intention = agent.adopt(email);
         notify(WorkflowStage.TRANSMISSION, StageStatus.COMPLETED,
-               "Email forwarded to " + agent.getName() + ", intention adopted (at most "
-               + intention.getMaxAttempts() + " drafts)");
+               "Email forwarded to " + agent.getName()
+               + (decision.isCollaborative() ? " (main agent) and to " + names(decision) + " (contributing)" : "")
+               + ", intention adopted (at most " + intention.getMaxAttempts() + " drafts)");
         ContextSelection context = agent.selectContext(email);
         notify(WorkflowStage.CONTEXT, StageStatus.COMPLETED, context.summary());
         for (WorkflowListener l : listeners) l.contextSelected(agent, context);
+
+        // email qui concerne plusieurs agents : chacun repond a sa partie avant le premier brouillon ;
+        // les contributions sont gardees pour les brouillons suivants (seul l'agent principal redige a nouveau)
+        intention.setContributions(collaborate(email, agent, decision));
 
         while (intention.isActive()) {
             int attempt = intention.getAttempts() + 1;
@@ -88,10 +104,11 @@ public class RoutingAgent{
             long generationMillis = (System.nanoTime() - start) / 1_000_000;
             notify(WorkflowStage.GENERATION, StageStatus.COMPLETED,
                    "Draft " + attempt + "/" + intention.getMaxAttempts() + " written by " + agent.getName());
-            Critique critique = review(email, agent, draft);
+            Critique critique = review(email, agent, draft, intention.getContributions());
             for (WorkflowListener l : listeners) l.draftProduced(attempt, draft, critique, generationMillis);
             Proposal proposal = new Proposal(email, agent, decision, draft,
-                                             intention.getAttempts(), intention.getMaxAttempts(), critique);
+                                             intention.getAttempts(), intention.getMaxAttempts(), critique,
+                                             intention.getContributions());
             notify(WorkflowStage.PROPOSAL, StageStatus.COMPLETED,
                    "Draft " + attempt + " returned to the user");
             notify(WorkflowStage.VALIDATION, StageStatus.PROCESSING, "Waiting for the user's decision");
@@ -128,13 +145,49 @@ public class RoutingAgent{
                                   (System.nanoTime() - start) / 1_000_000);
     }
 
-    private Critique review(Email email, Agent agent, String draft){
+    // Collaboration : chaque agent contributeur repond a sa partie de l'email pour l'agent principal.
+    // Un contributeur en echec n'arrete pas le traitement : l'agent principal redige alors seul.
+    // Public : utilise aussi par les experiences (ReplyEvaluation).
+    public List<Contribution> collaborate(Email email, Agent lead, RoutingDecision decision){
+        if (!decision.isCollaborative()) {
+            notify(WorkflowStage.COLLABORATION, StageStatus.SKIPPED, "Single agent: no other agent is needed");
+            return List.of();
+        }
+        List<Contribution> contributions = new ArrayList<>();
+        for (RoutingDecision.Collaborator c : decision.getCollaborators()) {
+            Agent helper = agents.get(c.role());
+            notify(WorkflowStage.COLLABORATION, StageStatus.PROCESSING,
+                   helper.getName() + " answers its part for " + lead.getName() + ": " + c.part());
+            long start = System.nanoTime();
+            Contribution contribution;
+            try {
+                String text = helper.contribute(email, c.part(), lead.getName());
+                contribution = Contribution.of(helper, c.part(), text, (System.nanoTime() - start) / 1_000_000);
+                if (!contribution.available()) {
+                    contribution = Contribution.failed(helper, c.part(), "empty answer", contribution.millis());
+                }
+            } catch (LlmException e) {
+                contribution = Contribution.failed(helper, c.part(), e.getMessage(), (System.nanoTime() - start) / 1_000_000);
+            }
+            contributions.add(contribution);
+            for (WorkflowListener l : listeners) l.contributionProduced(helper, contribution);
+        }
+        boolean any = contributions.stream().anyMatch(Contribution::available);
+        StringBuilder detail = new StringBuilder();
+        for (Contribution c : contributions) detail.append(c.summary()).append("\n");
+        detail.append(any ? lead.getName() + " merges the contributions into one reply"
+                          : lead.getName() + " answers alone");
+        notify(WorkflowStage.COLLABORATION, any ? StageStatus.COMPLETED : StageStatus.FAILED, detail.toString());
+        return contributions;
+    }
+
+    private Critique review(Email email, Agent agent, String draft, List<Contribution> contributions){
         if (critic == null || !critic.isEnabled()) {
             notify(WorkflowStage.CRITIC, StageStatus.SKIPPED, "CriticAgent disabled");
             return null;
         }
         notify(WorkflowStage.CRITIC, StageStatus.PROCESSING, "CriticAgent checks the draft against the agent's rules");
-        Critique critique = critic.review(email, agent, draft);
+        Critique critique = critic.review(email, agent, draft, contributions);
         notify(WorkflowStage.CRITIC, critique.isAvailable() ? StageStatus.COMPLETED : StageStatus.FAILED,
                critique.summary());
         return critique;
@@ -174,11 +227,20 @@ public class RoutingAgent{
         notify(WorkflowStage.ROUTING, StageStatus.PROCESSING,
                (scores.size() > 1 ? "Conflicting" : "Weak") + " signals: the LLM arbiter is consulted");
 
+        // collaboration : possible seulement si au moins deux agents sont concernes d'apres les signaux
+        // (votes ou mots-cles) ; l'arbitre confirme et dit quelle partie de l'email revient a chacun
+        Set<String> pool = maxCollaborators > 0 ? concerned(email, scores) : Set.of();
+        if (pool.size() < 2) pool = Set.of();
+        if (!pool.isEmpty()) signals.add("several agents concerned -> collaboration possible among " + pool);
         arbiterConsulted[0] = true;
-        RoutingDecision d = arbiter.choose(email, candidates);
+        RoutingDecision d = arbiter.choose(email, candidates, pool);
         if (d != null && d.getConfidence() >= ARBITER_MIN) {
             signals.add(String.format("%s: %s %.2f", d.getReason(), d.getRole(), d.getConfidence()));
-            return new RoutingDecision(d.getRole(), d.getConfidence(), String.join(", ", signals));
+            List<RoutingDecision.Collaborator> helpers = pool.isEmpty() ? List.of() : collaborators(d, pool);
+            for (RoutingDecision.Collaborator h : helpers) {
+                signals.add("collaboration: " + h.role() + " answers \"" + h.part() + "\"");
+            }
+            return new RoutingDecision(d.getRole(), d.getConfidence(), String.join(", ", signals), helpers);
         }
 
         if (!agents.containsKey(FALLBACK_ROLE)) {
@@ -186,6 +248,37 @@ public class RoutingAgent{
         }
         signals.add("no clear winner -> " + FALLBACK_ROLE);
         return new RoutingDecision(FALLBACK_ROLE, 0.0, String.join(", ", signals));
+    }
+
+    // agents concernes par l'email : ceux qui ont vote et ceux que les maillons reperent sans voter
+    // pour eux (mots-cles d'un second agent) ; l'agent generique n'est jamais contributeur
+    private Set<String> concerned(Email email, Map<String, Double> scores){
+        Set<String> concerned = new TreeSet<>(scores.keySet());
+        for (RoutingStep step : steps) concerned.addAll(step.concerned(email));
+        concerned.retainAll(agents.keySet());
+        concerned.remove(FALLBACK_ROLE);
+        return concerned;
+    }
+
+    // on ne garde que des contributeurs credibles : agents concernes par l'email (pool),
+    // differents de l'agent principal et de l'agent generique, avec une partie decrite, sans doublon
+    private List<RoutingDecision.Collaborator> collaborators(RoutingDecision d, Set<String> pool){
+        List<RoutingDecision.Collaborator> kept = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (RoutingDecision.Collaborator c : d.getCollaborators()) {
+            if (kept.size() >= maxCollaborators) break;
+            String role = c.role();
+            if (role.equals(d.getRole()) || role.equals(FALLBACK_ROLE) || !pool.contains(role)
+                || !agents.containsKey(role) || c.part().isBlank() || !seen.add(role)) continue;
+            kept.add(c);
+        }
+        return kept;
+    }
+
+    private String names(RoutingDecision decision){
+        List<String> names = new ArrayList<>();
+        for (RoutingDecision.Collaborator c : decision.getCollaborators()) names.add(agents.get(c.role()).getName());
+        return String.join(", ", names);
     }
 
     // on ignore les votes pour un agent qui n'existe pas
@@ -216,6 +309,10 @@ public class RoutingAgent{
 
     private String routingSummary(RoutingOutcome routing){
         if (routing.fallback()) return "No agent is suitable enough: fallback to the generic agent";
+        if (routing.decision().isCollaborative()) {
+            return "Decision taken by the LLM arbiter: " + agents.get(routing.decision().getRole()).getName()
+                   + " leads, " + names(routing.decision()) + " contribute(s)";
+        }
         if (routing.arbiterConsulted()) return "Decision taken by the LLM arbiter (LlmClassifierStep)";
         return "Signals agree, decision taken without the LLM";
     }

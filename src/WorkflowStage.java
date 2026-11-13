@@ -5,6 +5,7 @@ public enum WorkflowStage {
     SELECTION("Agent selection", "RoutingAgent"),
     TRANSMISSION("Transmission to the agent", "RoutingAgent"),
     CONTEXT("Context and memory", "Specialized agent"),
+    COLLABORATION("Collaboration", "Contributing agents"),
     GENERATION("Reply generation", "Local LLM"),
     CRITIC("Quality review", "CriticAgent"),
     PROPOSAL("Proposal returned to the user", "RoutingAgent"),

@@ -11,8 +11,10 @@ import java.awt.Stroke;
 import java.awt.geom.Path2D;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import javax.swing.JComponent;
 
@@ -25,6 +27,7 @@ public class AgentNetworkView extends JComponent {
     private List<String[]> agents = new ArrayList<>();
     private Map<String, Double> scores = new HashMap<>();
     private String selected;
+    private Set<String> helpers = new HashSet<>(); // collaboration : agents contributeurs
     private boolean criticEnabled = true;
     private boolean arbiter;
     private WorkflowStage active;
@@ -40,12 +43,19 @@ public class AgentNetworkView extends JComponent {
         this.criticEnabled = criticEnabled;
         scores = new HashMap<>();
         selected = null;
+        helpers = new HashSet<>();
         arbiter = false;
         active = null;
         repaint();
     }
 
     public void setRouting(String selectedRole, Map<String, Double> scores, boolean arbiter) {
+        setRouting(selectedRole, scores, arbiter, Set.of());
+    }
+
+    public void setRouting(String selectedRole, Map<String, Double> scores, boolean arbiter, Set<String> helpers) {
+        this.helpers = new HashSet<>();
+        for (String h : helpers) this.helpers.add(h.toUpperCase());
         this.selected = selectedRole.toUpperCase();
         this.scores = new HashMap<>(scores);
         this.arbiter = arbiter;
@@ -83,11 +93,19 @@ public class AgentNetworkView extends JComponent {
         for (String[] a : agents) {
             Rectangle r = agentBoxes.get(a[0]);
             boolean isChosen = a[0].equals(selected);
+            boolean helper = helpers.contains(a[0]);
             boolean voted = scores.containsKey(a[0]);
-            Color c = isChosen ? Theme.ACCENT : voted ? Theme.mix(Theme.ACCENT, Color.WHITE, 0.45) : Theme.BORDER;
-            edge(g2, router, r, c, isChosen ? BOLD : voted ? DASHED : THIN, isChosen);
+            Color c = isChosen ? Theme.ACCENT : helper ? Theme.agentColor(a[0])
+                    : voted ? Theme.mix(Theme.ACCENT, Color.WHITE, 0.45) : Theme.BORDER;
+            edge(g2, router, r, c, isChosen || helper ? BOLD : voted ? DASHED : THIN, isChosen || helper);
         }
         if (chosen != null) {
+            for (String role : helpers) {
+                Rectangle r = agentBoxes.get(role);
+                if (r == null) continue;
+                edge(g2, r, llm, Theme.mix(Theme.agentColor(role), Color.WHITE, 0.3), THIN, true);
+                contribution(g2, r, chosen, Theme.agentColor(role));
+            }
             edge(g2, chosen, llm, Theme.ACCENT, BOLD, true);
             edge(g2, router, user, Theme.ACCENT, BOLD, true);
         } else {
@@ -106,13 +124,31 @@ public class AgentNetworkView extends JComponent {
         node(g2, llm, "Local LLM", "LM Studio", new Color(0x0F766E), active == WorkflowStage.GENERATION, true);
         for (String[] a : agents) {
             boolean isChosen = a[0].equals(selected);
+            boolean helper = helpers.contains(a[0]);
             Double score = scores.get(a[0]);
             String sub = score != null ? String.format("vote %.2f", score) : null;
-            Color c = isChosen || score != null ? Theme.agentColor(a[0]) : Theme.TEXT_SOFT;
-            node(g2, agentBoxes.get(a[0]), a[1], sub, c,
-                 isChosen && (active == WorkflowStage.CONTEXT || active == WorkflowStage.GENERATION), isChosen);
+            if (isChosen && !helpers.isEmpty()) sub = "main agent" + (score != null ? String.format(", %.2f", score) : "");
+            if (helper) sub = "contributor" + (score != null ? String.format(", %.2f", score) : "");
+            Color c = isChosen || helper || score != null ? Theme.agentColor(a[0]) : Theme.TEXT_SOFT;
+            boolean working = isChosen && (active == WorkflowStage.CONTEXT || active == WorkflowStage.GENERATION)
+                              || helper && active == WorkflowStage.COLLABORATION;
+            node(g2, agentBoxes.get(a[0]), a[1], sub, c, working, isChosen || helper);
         }
         g2.dispose();
+    }
+
+    // collaboration : la note du contributeur est transmise a l'agent principal (fleche courbe a gauche)
+    private void contribution(Graphics2D g2, Rectangle from, Rectangle to, Color color) {
+        double x = from.x;
+        double y1 = from.getCenterY(), y2 = to.getCenterY();
+        double bulge = Math.min(26, 8 + Math.abs(y2 - y1) / 4);
+        g2.setColor(color);
+        g2.setStroke(DASHED);
+        Path2D p = new Path2D.Double();
+        p.moveTo(x, y1);
+        p.curveTo(x - bulge, y1, x - bulge, y2, x, y2);
+        g2.draw(p);
+        arrowHead(g2, (int) (x - 6), (int) y2, (int) x, (int) y2, color);
     }
 
     private boolean isRouterStage() {

@@ -41,6 +41,14 @@ public class DecisionLogReport {
         long errors = entries.stream().filter(e -> "ERROR".equals(e.path("outcome").asText())).count();
         md.append("- LLM arbiter consulted: ").append(pct(arbiter, entries.size())).append("\n");
         md.append("- Fallback to the generic agent: ").append(pct(fallback, entries.size())).append("\n");
+        List<JsonNode> collaborative = entries.stream()
+                .filter(e -> e.path("routing").path("collaborators").size() > 0).toList();
+        md.append("- Collaboration between agents: ").append(pct(collaborative.size(), entries.size()));
+        if (!collaborative.isEmpty()) {
+            long ok = collaborative.stream().filter(e -> List.of("ACCEPTED", "EDITED").contains(e.path("outcome").asText())).count();
+            md.append(", reply validated in ").append(pct(ok, collaborative.size()));
+        }
+        md.append("\n");
         md.append("- Errors: ").append(errors).append("\n");
         md.append(String.format(Locale.ROOT, "- Mean routing time: %.0f ms, mean total time (including the user): %.0f ms%n",
                 mean(entries, e -> e.path("routing").path("millis").asDouble(Double.NaN)),

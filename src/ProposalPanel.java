@@ -5,11 +5,15 @@ import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.Toolkit;
 import java.awt.datatransfer.StringSelection;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.function.Consumer;
 
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.JLabel;
+import javax.swing.JOptionPane;
+import javax.swing.JScrollPane;
 import javax.swing.JPanel;
 import javax.swing.JTextArea;
 import javax.swing.event.DocumentEvent;
@@ -25,6 +29,7 @@ public class ProposalPanel extends Card {
     private final JLabel criticTitle = Theme.label("", Theme.font(Font.BOLD, 12.5f), Theme.TEXT);
     private final JLabel criticIssues = Theme.label("", Theme.font(Font.PLAIN, 12), Theme.TEXT_MUTED);
     private final PillButton useCritic = new PillButton("Use as remarks", PillButton.Kind.GHOST);
+    private final PillButton viewContrib = new PillButton("Contributions", PillButton.Kind.GHOST);
     private final PillButton accept = new PillButton("Accept reply", PillButton.Kind.SUCCESS);
     private final PillButton regenerate = new PillButton("Regenerate with remarks", PillButton.Kind.SECONDARY);
     private final PillButton discard = new PillButton("Refuse", PillButton.Kind.DANGER);
@@ -55,7 +60,15 @@ public class ProposalPanel extends Card {
         titles.add(Box.createVerticalStrut(2));
         titles.add(Theme.caption("Nothing is sent: you accept, edit, refuse or ask for a new draft"));
         header.add(titles, BorderLayout.WEST);
-        header.add(attemptBadge, BorderLayout.EAST);
+        // collaboration : le bandeau nomme les agents contributeurs, ce bouton (a cote du badge) montre
+        // leurs notes ; pas de cadre supplementaire, la zone du brouillon garde toute sa hauteur
+        JPanel badges = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
+        badges.setOpaque(false);
+        badges.add(viewContrib);
+        badges.add(attemptBadge);
+        header.add(badges, BorderLayout.EAST);
+        viewContrib.addActionListener(e -> showContributionDetails());
+        viewContrib.setVisible(false);
 
         banner.add(bannerText, BorderLayout.CENTER);
         JPanel top = new JPanel(new BorderLayout(0, 10));
@@ -156,9 +169,17 @@ public class ProposalPanel extends Card {
         attemptBadge.setVisible(true);
         attemptBadge.setStyle("Draft " + proposal.getAttempt() + "/" + proposal.getMaxAttempts(),
                               Theme.ACCENT_SOFT, Theme.ACCENT);
-        setBanner("Draft written by " + proposal.getAgent().getName()
-                  + ". Edit the text if needed, then accept it, refuse it or ask for a new draft.",
-                  Theme.ACCENT_SOFT, Theme.ACCENT_DARK);
+        // collaboration : le bandeau nomme les contributeurs et la partie traitee par chacun
+        List<String> helpers = new ArrayList<>();
+        for (Contribution c : proposal.getContributions()) {
+            helpers.add(c.agentName() + (c.available() ? " (" + c.part() + ")" : " (unavailable)"));
+        }
+        String text = helpers.isEmpty()
+                ? "Draft written by " + proposal.getAgent().getName()
+                  + ". Edit the text if needed, then accept it, refuse it or ask for a new draft."
+                : "Draft written by " + proposal.getAgent().getName() + " with the contribution of "
+                  + String.join(", ", helpers) + ".";
+        setBanner(text, Theme.ACCENT_SOFT, Theme.ACCENT_DARK, !helpers.isEmpty());
         draft.setText(proposal.getDraft());
         draft.setCaretPosition(0);
         draft.setEditable(true);
@@ -248,6 +269,25 @@ public class ProposalPanel extends Card {
         accept.setText(draftChanged() ? "Validate edited reply" : "Accept reply");
     }
 
+
+    // texte complet des contributions, a la demande (le panneau reste compact)
+    private void showContributionDetails() {
+        if (current == null || current.getContributions().isEmpty()) return;
+        StringBuilder sb = new StringBuilder();
+        for (Contribution c : current.getContributions()) {
+            sb.append(c.agentName()).append(" — ").append(c.part()).append("\n")
+              .append(c.available() ? c.text().trim() : "Unavailable: " + c.error()).append("\n\n");
+        }
+        JTextArea text = Theme.area(12);
+        text.setText(sb.toString().trim());
+        text.setEditable(false);
+        text.setCaretPosition(0);
+        JScrollPane scroll = Theme.scroll(text, true);
+        scroll.setPreferredSize(new Dimension(520, 260));
+        JOptionPane.showMessageDialog(this, scroll, "Contributions merged by " + current.getAgent().getName(),
+                                      JOptionPane.PLAIN_MESSAGE);
+    }
+
     private void showCritique(Critique critique) {
         if (critique == null) {
             criticBox.setVisible(false);
@@ -272,10 +312,16 @@ public class ProposalPanel extends Card {
         useCritic.setVisible(!critique.getIssues().isEmpty());
     }
 
+    // tout changement de bandeau masque le bouton des contributions (seul showProposal le remontre)
     private void setBanner(String text, Color fill, Color foreground) {
+        setBanner(text, fill, foreground, false);
+    }
+
+    private void setBanner(String text, Color fill, Color foreground, boolean withContributions) {
         banner.setColors(fill, Theme.mix(foreground, Color.WHITE, 0.7));
         bannerText.setForeground(Theme.mix(foreground, Color.BLACK, 0.15));
         bannerText.setText(Theme.html(text, 375));
+        viewContrib.setVisible(withContributions);
     }
 
     private void showActions(JPanel visible) {

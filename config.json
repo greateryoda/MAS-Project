@@ -1,6 +1,4 @@
 {
-  "url": "http://127.0.0.1:1234/v1/chat/completions",
-  "model": "google/gemma-4-e4b",
   "critic": {
     "enabled": true,
     "systemPromptFile": "critic/attitude_critic.txt"
@@ -12,6 +10,10 @@
   },
   "embedding": {
     "model": ""
+  },
+  "collaboration": {
+    "enabled": true,
+    "maxAgents": 2
   },
   "log": {
     "enabled": true,
